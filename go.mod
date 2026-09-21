@@ -1,6 +1,6 @@
 module github.com/jamesaorson/template-golang
 
-go 1.25.7
+go 1.26.6
 
 require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
