@@ -1,0 +1,54 @@
+name: Security Issue
+description: Non-critical security concerns suitable for the public tracker. For vulnerabilities, use the private security advisory instead.
+title: "security: "
+labels: ["security"]
+type: Bug
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ **Is this a vulnerability?** If it could be exploited by a crafted input file or a hostile caller, please [file a private security advisory](https://github.com/autobutler-org/sprocket/security/advisories/new) instead of a public issue. Do not post details publicly.
+
+        This template is for security *hardening*, *improvements*, or *non-exploitable* concerns.
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Low (hardening / defense-in-depth)
+        - Medium (exploitable under specific conditions)
+        - High (use private advisory instead)
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Container / codec parsing
+        - Resource exhaustion (memory, CPU, goroutines)
+        - File path handling
+        - Dependencies
+        - CI / supply chain
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is the concern? What could go wrong, and under what conditions?
+    validations:
+      required: true
+  - type: textarea
+    id: suggested-fix
+    attributes:
+      label: Suggested fix or mitigation
+      description: If you have a fix in mind, describe it here.
+  - type: input
+    id: version
+    attributes:
+      label: Sprocket version
+      placeholder: "e.g. v0.1.0"

@@ -1,9 +1,20 @@
 version: "2"
 run:
   tests: true
+
+# Report every violation. The defaults (50 per linter, 3 per message) hide the
+# rest, so a run can look nearly clean while hundreds of issues sit behind the cap.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
 linters:
-  default: none 
+  default: none
   enable:
+    # golangci-lint's standard set: caught by CI, not autofixable.
+    - errcheck
+    - ineffassign
+    - unused
     # Linters with autofix capabilities only
     - canonicalheader
     - copyloopvar
@@ -71,6 +82,20 @@ linters:
       - linters:
           - staticcheck
         text: should not use underscores in package names
+      # Best-effort teardown. A failed Close on a file we are done reading, or a
+      # temp file that could not be removed, has no recovery beyond what the
+      # caller already returns.
+      - linters:
+          - errcheck
+        text: 'Error return value of `[^`]*\.Close` is not checked'
+      - linters:
+          - errcheck
+        text: 'Error return value of `os\.Remove(All)?` is not checked'
+      # A test that ignores a setup error fails on the assertion a few lines later,
+      # with a better message than errcheck would have given.
+      - linters:
+          - errcheck
+        path: _test\.go
     paths:
       - third_party$
       - builtin$

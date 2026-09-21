@@ -1,14 +1,26 @@
 name: Feature Request
 description: Request a new feature
 title: "[Feature] "
-labels:
-  - enhancement
+labels: ["enhancement"]
+type: Feature
 assignees: []
 body:
   - type: markdown
     attributes:
       value: |
         Thanks for shoveling more work onto us!
+  - type: textarea
+    id: whaddaya-want
+    attributes:
+      label: What feature do you want?
+      description: You can also ask that we remove things
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: What are you trying to do with it?
+      description: The problem behind the request. Helps us find a smaller API that still solves it.
   - type: textarea
     id: attachments
     attributes:
