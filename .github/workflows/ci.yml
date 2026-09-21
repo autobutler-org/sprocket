@@ -3,9 +3,13 @@ name: Continuous Integration
 on:
   workflow_dispatch:
   merge_group:
+  # Also on push to main so the badges have a run attributed to the branch. Without it
+  # every run belongs to a pull request's head ref and a ?branch=main badge reads
+  # "no status".
+  push:
+    branches: [main]
+  # No base-branch filter: a PR stacked on another feature branch needs building too.
   pull_request:
-    branches:
-      - main
 
 # cancel previous runs if new commits are pushed into the same PR
 concurrency:
@@ -14,6 +18,10 @@ concurrency:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   ci:
@@ -35,4 +43,6 @@ jobs:
         run: make build
 
       - name: Test
+        env:
+          PRINT_COVERAGE: true
         run: make test

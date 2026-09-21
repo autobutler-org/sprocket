@@ -1,8 +1,8 @@
 name: Bug Report
 description: File a bug report.
 title: "[Bug] "
-labels:
-  - bug
+labels: ["bug"]
+type: Bug
 assignees: []
 body:
   - type: markdown
@@ -17,11 +17,29 @@ body:
       placeholder: What is going on?
     validations:
       required: true
-  - type: input
-    id: url
+  - type: textarea
+    id: repro
     attributes:
-      label: URL of problem
-      description: Provide a URL (local or remote) that demonstrates the problem
+      label: How do we reproduce it?
+      description: A minimal Go snippet, and the input file if the bug depends on one.
+      render: go
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Sprocket version
+      description: The version in your go.mod, or the commit if you are on a pseudo-version.
+      placeholder: "e.g. v0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and architecture
+      placeholder: "e.g. darwin/arm64, linux/amd64"
+    validations:
+      required: true
   - type: textarea
     id: logs
     attributes:

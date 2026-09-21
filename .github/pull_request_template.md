@@ -1,11 +1,29 @@
-# TODO - Name of change
+Closes #N
 
-TODO
+## What
 
-## Why do we need this?
+One paragraph. What changed and why.
 
-TODO
+## Changes
 
-## How was this tested?
+- Bullet list of specific changes
 
-TODO
+## PR Type
+
+- [ ] Bug fix
+- [ ] Feature
+- [ ] Refactor
+- [ ] Docs / content
+- [ ] Chore / tooling
+- [ ] Tests
+
+## Testing
+
+- [ ] Includes new automated tests
+- [ ] Covered by existing tests
+- [ ] Manually tested by author
+- [ ] No testing needed (docs, trivial change)
+
+## Notes
+
+<!-- Optional. Tradeoffs, follow-ups, things reviewers should know. -->
