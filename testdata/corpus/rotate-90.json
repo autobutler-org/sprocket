@@ -1,0 +1,10 @@
+{
+  "duration": 2.000000,
+  "width": 128,
+  "height": 72,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "bitrate": 75520,
+  "framerate": 24,
+  "rotation": 90
+}
