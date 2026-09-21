@@ -30,11 +30,14 @@ jobs:
         with:
           go-version-file: "go.mod"
           cache: true
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
 
       - name: Detect dirty go mod
         run: |
           make tidy
-          git diff --exit-code -- go.mod go.sum
+          git diff --exit-code -- go.mod go.sum tools/go.mod tools/go.sum
 
       - name: Check formatting
         run: |
@@ -56,6 +59,9 @@ jobs:
         with:
           go-version-file: "go.mod"
           cache: true
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
