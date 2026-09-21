@@ -35,12 +35,18 @@ jobs:
         with:
           go-version-file: "go.mod"
           cache: true
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
 
       - name: Download dependencies
         run: make deps
 
       - name: Build
         run: make build
+
+      - name: Cross-compile
+        run: make build/cross
 
       - name: Test
         env:

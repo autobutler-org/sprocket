@@ -26,19 +26,15 @@ endif
 
 export GOPROXY ?= https://proxy.golang.org,direct
 GO := $(shell which go)
-AIR := $(shell which air)
 
 # Read the toolchain from go.mod rather than pinning it here, so the two cannot drift.
 GO_MOD_VERSION := $(shell awk '/^go /{print $$2; exit}' go.mod)
 export GOTOOLCHAIN=go$(GO_MOD_VERSION)
 
-MAIN ?= ./cmd/example/main.go
-EXE ?= ./build/example
-
 ##@ Development Environment
 
 .PHONY: setup
-setup: setup/gotools setup/air
+setup: setup/gotools
 
 .PHONY: setup/gotools
 setup/gotools: ## Install go tools
@@ -51,10 +47,6 @@ setup/gotools: ## Install go tools
 	# staticcheck is not installed on its own -- golangci-lint runs it as one of its
 	# linters, and two copies at different versions disagree about what is a warning.
 
-.PHONY: setup/air
-setup/air: ## Install air tool
-	$(GO) install github.com/air-verse/air@latest
-
 ##@ Build
 
 .PHONY: build
@@ -62,19 +54,18 @@ build: build/go ## Build codebase
 
 .PHONY: build/go
 build/go: ## Build Go codebase
-	mkdir -p ./build
-	$(GO) build -o $(EXE) $(MAIN)
+	$(GO) build ./...
+
+# The library promises no cgo and clean cross-compilation. Nothing links C today, so
+# the only way that promise stays true is to check it on every run.
+.PHONY: build/cross
+build/cross: ## Build for the supported cross-compilation targets with cgo off
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build ./...
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build ./...
 
 .PHONY: clean
 clean: ## Clean build space
-	rm -rf \
-		./build \
-		./coverage.out \
-		./tmp
-
-.PHONY: run
-run: build ## Build and run the application
-	$(EXE)
+	rm -rf ./coverage.out
 
 PRINT_COVERAGE ?= 0
 
@@ -87,13 +78,6 @@ test: ## Run tests
 		$(GO) tool cover -func=coverage.out
 	fi
 
-.PHONY: watch
-watch: ## Watch for changes and rebuild
-	$(AIR) \
-		--build.cmd "$(MAKE) build" \
-		--build.entrypoint "$(EXE)" \
-		--build.exclude_dir ".github,build,docs"
-
 ##@ Dependencies
 
 .PHONY: deps
@@ -103,6 +87,7 @@ deps: ## Install dependencies for Go
 .PHONY: tidy
 tidy: ## Go deps (go mod tidy)
 	$(GO) mod tidy
+	cd tools && $(GO) mod tidy
 
 .PHONY: upgrade
 upgrade: upgrade/go ## Upgrade dependencies
@@ -114,6 +99,9 @@ upgrade/go: ## Upgrade Go dependencies
 
 ##@ Code Quality
 
+# The lint tools live in their own module so the library's go.mod lists only what the
+# library imports.
+GOLINT := $(GO) tool -modfile=tools/go.mod golangci-lint
 GOLINT_ARGS ?= --verbose --config .golangci.yml
 
 .PHONY: check
@@ -121,7 +109,7 @@ check: check/go ## Check code quality
 
 .PHONY: check/go
 check/go: ## Check Go code quality
-	$(GO) tool golangci-lint run --fix $(GOLINT_ARGS) ./...
+	$(GOLINT) run --fix $(GOLINT_ARGS) ./...
 
 .PHONY: check/vuln
 check/vuln: ## Check Go module for known CVEs (govulncheck)
@@ -136,7 +124,7 @@ format: format/go ## Format code
 
 .PHONY: format/go
 format/go: ## Format Go code
-	$(GO) tool golangci-lint fmt $(GOLINT_ARGS)
+	$(GOLINT) fmt $(GOLINT_ARGS)
 
 ##@ Helpers
 
