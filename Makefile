@@ -78,6 +78,18 @@ test: ## Run tests
 		$(GO) tool cover -func=coverage.out
 	fi
 
+##@ Test Data
+
+# ffmpeg is a contributor's tool, not a dependency of this library. Nothing in the
+# test path and nothing in CI runs this target; the corpus is committed data.
+.PHONY: corpus
+corpus: ## Regenerate the test corpus and its goldens (needs ffmpeg)
+	if ! command -v ffmpeg >/dev/null 2>&1; then
+		echo "ffmpeg is not installed. Run 'brew install ffmpeg' first."
+		exit 1
+	fi
+	./testdata/corpus/generate.sh
+
 ##@ Dependencies
 
 .PHONY: deps
