@@ -1,6 +1,7 @@
 package isobmff
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -18,8 +19,14 @@ type SyncSample struct {
 	// DecodeTime is the sample's decode time on the track's media timeline.
 	DecodeTime time.Duration
 	// Time is the sample's composition time, which is DecodeTime plus the ctts
-	// or trun composition offset. It is when the sample is displayed.
+	// or trun composition offset. It is when the sample is displayed, on the
+	// track's own media timeline.
 	Time time.Duration
+	// MovieTime is when the sample is displayed on the movie timeline, which is
+	// the timeline ReadSyncSample's argument is measured on. It is Time mapped
+	// back through the track's edit list, so a file with no edit list reports
+	// the same value twice.
+	MovieTime time.Duration
 	// Codec is the track's codec short name, as SampleEntry.Codec documents.
 	Codec string
 	// Config is the raw avcC or hvcC record, aliasing the parsed moov. A
@@ -41,22 +48,86 @@ func (f *File) ReadSyncSample(at time.Duration) (SyncSample, error) {
 	if track == nil {
 		return SyncSample{}, ErrNoVideoTrack
 	}
-	media := track.mediaTicks(at, f.Timescale)
-
-	var (
-		found fragSample
-		index uint32
-		err   error
-	)
-	if len(track.fragments) > 0 {
-		found, index, err = f.fragmentSync(track, media)
-	} else {
-		found, index, err = track.tableSync(media)
-	}
+	found, index, err := f.syncAtOrBefore(track, track.mediaTicks(at, f.Timescale))
 	if err != nil {
 		return SyncSample{}, err
 	}
+	return f.readSyncSample(track, found, index)
+}
 
+// ReadNearestSyncSample reads the video track's sync sample nearest a
+// presentation time, which is the keyframe a thumbnail wants. at is measured on
+// the movie timeline and mapped through the track's edit list.
+//
+// The sync sample after the requested time wins when it is the closer of the
+// two, measured on composition times, which is when each one is displayed. A
+// tie goes to the earlier keyframe. A time past the end of the track answers
+// with the last keyframe, and a time before the first keyframe answers with
+// that first one.
+//
+// One sample is read, not two: the candidates are located in the sample tables
+// and only the winner's bytes are pulled off disk, under the same cap
+// ReadSyncSample documents.
+func (f *File) ReadNearestSyncSample(at time.Duration) (SyncSample, error) {
+	track := f.VideoTrack()
+	if track == nil {
+		return SyncSample{}, ErrNoVideoTrack
+	}
+	media := track.mediaTicks(at, f.Timescale)
+
+	found, index, beforeErr := f.syncAtOrBefore(track, media)
+	next, nextIndex, haveNext, err := f.syncAfter(track, index)
+	if err != nil {
+		return SyncSample{}, err
+	}
+	switch {
+	case beforeErr != nil:
+		// Nothing at or before the time. A track whose first keyframe is not
+		// its first sample still has a nearest one; anything else is the error.
+		if !haveNext || !errors.Is(beforeErr, ErrNoSyncSample) {
+			return SyncSample{}, beforeErr
+		}
+		found, index = next, nextIndex
+	case haveNext && ticksApart(compositionTime(next), media) < ticksApart(compositionTime(found), media):
+		found, index = next, nextIndex
+	}
+	return f.readSyncSample(track, found, index)
+}
+
+// ticksApart is the distance between two media times, either way round.
+func ticksApart(a, b uint64) uint64 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+// syncAtOrBefore locates the sync sample at or before a media time, from the
+// track's own tables or across its fragments.
+func (f *File) syncAtOrBefore(t *Track, media uint64) (fragSample, uint32, error) {
+	if len(t.fragments) > 0 {
+		return f.fragmentSync(t, media)
+	}
+	return t.tableSync(media)
+}
+
+// syncAfter locates the first sync sample after index, reporting whether the
+// track has one at all. A track with no later keyframe is not an error.
+func (f *File) syncAfter(t *Track, index uint32) (fragSample, uint32, bool, error) {
+	if len(t.fragments) > 0 {
+		return f.fragmentSyncAfter(t, index)
+	}
+	sync, ok := t.tables.syncAfter(index)
+	if !ok {
+		return fragSample{}, 0, false, nil
+	}
+	found, err := t.tableSample(sync)
+	return found, sync, err == nil, err
+}
+
+// readSyncSample pulls a located sample's bytes off disk and pairs them with
+// the track's codec configuration.
+func (f *File) readSyncSample(track *Track, found fragSample, index uint32) (SyncSample, error) {
 	if found.size > maxSampleBytes {
 		return SyncSample{}, fmt.Errorf("%w: sample %d is %d bytes, over the %d byte cap",
 			ErrSampleTooLarge, index, found.size, int64(maxSampleBytes))
@@ -75,6 +146,7 @@ func (f *File) ReadSyncSample(at time.Duration) (SyncSample, error) {
 		Index:         index,
 		DecodeTime:    ticksToDuration(found.decode, track.Timescale),
 		Time:          ticksToDuration(compositionTime(found), track.Timescale),
+		MovieTime:     track.movieTime(compositionTime(found), f.Timescale),
 		Codec:         track.Entry.Codec,
 		Config:        track.Entry.Config,
 		NALLengthSize: track.Entry.NALLengthSize,
@@ -99,17 +171,24 @@ func (t *Track) tableSync(media uint64) (fragSample, uint32, error) {
 	if !ok {
 		return fragSample{}, 0, fmt.Errorf("%w: at or before sample %d", ErrNoSyncSample, index)
 	}
-	where, err := t.tables.sampleRange(sync)
+	found, err := t.tableSample(sync)
+	return found, sync, err
+}
+
+// tableSample describes one sample of a track's own sample tables: when it is
+// shown and where it lives in the file.
+func (t *Track) tableSample(index uint32) (fragSample, error) {
+	where, err := t.tables.sampleRange(index)
 	if err != nil {
-		return fragSample{}, 0, err
+		return fragSample{}, err
 	}
 	return fragSample{
-		decode: t.tables.sampleTime(sync),
-		comp:   t.tables.compositionOffset(sync),
+		decode: t.tables.sampleTime(index),
+		comp:   t.tables.compositionOffset(index),
 		offset: where.offset,
 		size:   where.size,
 		sync:   true,
-	}, sync, nil
+	}, nil
 }
 
 // fragmentSync finds the sync sample at or before a media time across a
@@ -148,4 +227,33 @@ func (f *File) fragmentSync(t *Track, media uint64) (fragSample, uint32, error) 
 		limit = math.MaxUint64
 	}
 	return fragSample{}, 0, fmt.Errorf("%w: at or before %d media ticks", ErrNoSyncSample, media)
+}
+
+// fragmentSyncAfter finds the first sync sample after index across a fragmented
+// track. Fragments are in index order, so the search starts at the first one
+// holding a sample past index and stops at the first keyframe it finds.
+func (f *File) fragmentSyncAfter(t *Track, index uint32) (fragSample, uint32, bool, error) {
+	for _, fragment := range t.fragments {
+		if !fragment.sync || fragment.firstIndex+fragment.samples <= index+1 {
+			continue
+		}
+		var (
+			best  fragSample
+			at    uint32
+			found bool
+			nth   uint32
+		)
+		if err := f.fragmentSamples(t, fragment, func(s fragSample) {
+			if !found && s.sync && fragment.firstIndex+nth > index {
+				best, at, found = s, fragment.firstIndex+nth, true
+			}
+			nth++
+		}); err != nil {
+			return fragSample{}, 0, false, err
+		}
+		if found {
+			return best, at, true, nil
+		}
+	}
+	return fragSample{}, 0, false, nil
 }

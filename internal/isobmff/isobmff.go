@@ -299,6 +299,22 @@ func (t *Track) mediaTicks(at time.Duration, movieTimescale uint32) uint64 {
 	return ticks
 }
 
+// movieTime maps a media composition time back onto the movie timeline, the
+// inverse of mediaTicks. A time inside the part of the media the edit list
+// trims away reports zero, which is where the edit puts it.
+func (t *Track) movieTime(ticks uint64, movieTimescale uint32) time.Duration {
+	for _, e := range t.Edits {
+		if e.MediaTime >= 0 {
+			if ticks < uint64(e.MediaTime) {
+				ticks = uint64(e.MediaTime)
+			}
+			ticks -= uint64(e.MediaTime)
+			break
+		}
+	}
+	return ticksToDuration(ticks, t.Timescale) + ticksToDuration(t.EmptyEditDuration(), movieTimescale)
+}
+
 // readFtyp records the brands. ISO/IEC 14496-12 4.3.
 func (f *File) readFtyp(off, size int64) error {
 	body, err := readWhole(f.r, off, size, maxFtypBytes, "ftyp")
