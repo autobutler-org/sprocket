@@ -112,6 +112,11 @@ type SampleEntry struct {
 	NALLengthSize int
 	// ObjectType is the esds objectTypeIndication, zero when there is no esds.
 	ObjectType byte
+	// DecoderConfig is the esds DecoderSpecificInfo, aliasing the parsed moov:
+	// the raw AudioSpecificConfig for an AAC track, which is what Matroska
+	// stores as that track's CodecPrivate. Treat it as read-only; it is nil
+	// when the entry carries no esds or the esds carries no such descriptor.
+	DecoderConfig []byte
 }
 
 // Track is one trak box: its header, its media timeline, and its sample tables.
@@ -305,10 +310,16 @@ func (t *Track) mediaTicks(at time.Duration, movieTimescale uint32) uint64 {
 	return ticks
 }
 
-// movieTime maps a media composition time back onto the movie timeline, the
-// inverse of mediaTicks. A time inside the part of the media the edit list
-// trims away reports zero, which is where the edit puts it.
-func (t *Track) movieTime(ticks uint64, movieTimescale uint32) time.Duration {
+// MovieTime maps a media composition time back onto the movie timeline, the
+// inverse of mediaTicks: it applies the leading empty edit and the media time
+// the first real edit starts at, which together are what hide a codec's
+// priming delay. A time inside the part of the media the edit list trims away
+// reports zero, which is where the edit puts it.
+//
+// movieTimescale is the file's own, which File.Timescale reports. A writer for
+// another container family uses this to put a sample where a player would show
+// it, since no other family expresses an edit list.
+func (t *Track) MovieTime(ticks uint64, movieTimescale uint32) time.Duration {
 	for _, e := range t.Edits {
 		if e.MediaTime >= 0 {
 			if ticks < uint64(e.MediaTime) {
@@ -591,3 +602,8 @@ func durationToTicks(d time.Duration, timescale uint32) uint64 {
 func be16(b []byte) uint16 { return binary.BigEndian.Uint16(b) }
 func be32(b []byte) uint32 { return binary.BigEndian.Uint32(b) }
 func be64(b []byte) uint64 { return binary.BigEndian.Uint64(b) }
+
+// ReaderAt returns the reader this file was parsed from, so that a writer for
+// another container family can copy the sample payload out of it. It is the
+// same reader the caller passed to Parse and it stays valid exactly as long.
+func (f *File) ReaderAt() io.ReaderAt { return f.r }

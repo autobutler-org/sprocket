@@ -172,7 +172,16 @@ func TestCanRemux(t *testing.T) {
 		// A container narrower than mp4 refuses what mp4 takes.
 		{video: "av1", audio: "aac", target: sprocket.ThreeGP, want: false},
 		{video: "h264", audio: "opus", target: sprocket.ThreeGP, want: false},
-		{video: "h264", audio: "aac", target: sprocket.Container("mkv"), want: false},
+		{video: "h264", audio: "aac", target: sprocket.Container("avi"), want: false},
+		// The Matroska family takes what the MP4 family takes and more; WebM is
+		// the strict one, and refuses everything but its own three codecs.
+		{video: "h264", audio: "aac", target: sprocket.MKV, want: true},
+		{video: "vp8", audio: "vorbis", target: sprocket.MKV, want: true},
+		{video: "vp9", audio: "opus", target: sprocket.WebM, want: true},
+		{video: "av1", audio: "opus", target: sprocket.WebM, want: true},
+		{video: "h264", audio: "opus", target: sprocket.WebM, want: false},
+		{video: "vp9", audio: "aac", target: sprocket.WebM, want: false},
+		{video: "vp8", audio: "vorbis", target: sprocket.MP4, want: false},
 	} {
 		t.Run(tc.video+"+"+tc.audio+"/"+string(tc.target), func(t *testing.T) {
 			info := sprocket.Info{VideoCodec: tc.video, AudioCodec: tc.audio}
@@ -221,7 +230,7 @@ func TestRemuxRefusesAFragmentedSource(t *testing.T) {
 func TestRemuxRefusesAnUnknownTarget(t *testing.T) {
 	source := readCorpus(t, "h264-aac.mp4")
 
-	err := sprocket.Remux(bytes.NewReader(source), int64(len(source)), io.Discard, sprocket.Container("mkv"))
+	err := sprocket.Remux(bytes.NewReader(source), int64(len(source)), io.Discard, sprocket.Container("avi"))
 	if !errors.Is(err, sprocket.ErrUnsupportedContainer) {
 		t.Errorf("error = %v, want ErrUnsupportedContainer", err)
 	}

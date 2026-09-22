@@ -274,7 +274,9 @@ func TestTrimRefusesWhatItCannotWrite(t *testing.T) {
 	}{
 		{name: "prores and pcm", file: "prores-pcm.mov", target: sprocket.MP4, want: sprocket.ErrIncompatible},
 		{name: "fragmented", file: "fragmented.mp4", target: sprocket.MP4, want: sprocket.ErrUnsupportedContainer},
-		{name: "unknown target", file: gop12, target: sprocket.Container("mkv"), want: sprocket.ErrUnsupportedContainer},
+		{name: "unknown target", file: gop12, target: sprocket.Container("avi"), want: sprocket.ErrUnsupportedContainer},
+		{name: "webm from h264", file: gop12, target: sprocket.WebM, want: sprocket.ErrIncompatible},
+		{name: "matroska source", file: "h264-gop12.mkv", target: sprocket.MP4, want: sprocket.ErrUnsupportedContainer},
 		{name: "not media", content: []byte("hello world, definitely not a movie"), target: sprocket.MP4, want: sprocket.ErrUnsupportedContainer},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

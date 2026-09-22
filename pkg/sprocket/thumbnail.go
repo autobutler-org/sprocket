@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/autobutler-org/sprocket/internal/decode"
-	"github.com/autobutler-org/sprocket/internal/isobmff"
 )
 
 // Frame is one decoded picture and when it is shown.
@@ -52,24 +51,57 @@ type ThumbnailOptions struct {
 // library reads returns ErrUnsupportedContainer, and a container whose headers
 // or keyframe are malformed or cut short returns ErrCorrupt.
 func Thumbnail(r io.ReaderAt, size int64, at time.Duration, opts ThumbnailOptions) (Frame, error) {
-	file, err := isobmff.Parse(r, size)
+	file, err := open(r, size)
+	if err != nil {
+		return Frame{}, err
+	}
+	frame, rotation, err := nearestKeyframe(file, max(at, 0))
 	if err != nil {
 		return Frame{}, containerError(err)
 	}
-	sample, err := file.ReadNearestSyncSample(max(at, 0))
-	if err != nil {
-		return Frame{}, containerError(err)
-	}
-	picture, err := decode.Keyframe(sample.Codec, sample.Config, sample.NALLengthSize, sample.Data)
+	picture, err := decode.Keyframe(frame.codec, frame.config, frame.nalLengthSize, frame.data)
 	if err != nil {
 		return Frame{}, thumbnailError(err)
 	}
 
-	img := decode.RGBA(picture)
-	if video := file.VideoTrack(); video != nil {
-		img = rotate(img, video.Rotation)
+	img := rotate(decode.RGBA(picture), rotation)
+	return Frame{Image: resize(img, opts.MaxDimension), Time: frame.at}, nil
+}
+
+// keyframe is one keyframe read out of either container family, with the
+// fields a decoder needs and when the frame is shown.
+type keyframe struct {
+	codec         string
+	config        []byte
+	nalLengthSize int
+	data          []byte
+	at            time.Duration
+}
+
+// nearestKeyframe reads the keyframe nearest a time out of whichever family
+// the file belongs to, and reports the rotation to apply to it. Matroska
+// carries no display matrix, so a Matroska source is never rotated.
+func nearestKeyframe(file container, at time.Duration) (keyframe, int, error) {
+	if file.mkv != nil {
+		sample, err := file.mkv.ReadNearestSyncSample(at)
+		return keyframe{
+			codec: sample.Codec, config: sample.Config,
+			nalLengthSize: sample.NALLengthSize, data: sample.Data, at: sample.Time,
+		}, 0, err
 	}
-	return Frame{Image: resize(img, opts.MaxDimension), Time: sample.MovieTime}, nil
+
+	sample, err := file.mp4.ReadNearestSyncSample(at)
+	if err != nil {
+		return keyframe{}, 0, err
+	}
+	var rotation int
+	if video := file.mp4.VideoTrack(); video != nil {
+		rotation = video.Rotation
+	}
+	return keyframe{
+		codec: sample.Codec, config: sample.Config,
+		nalLengthSize: sample.NALLengthSize, data: sample.Data, at: sample.MovieTime,
+	}, rotation, nil
 }
 
 // thumbnailError maps a decoder error onto this package's sentinels. A picture

@@ -156,7 +156,7 @@ func TestKeyframeDeterministic(t *testing.T) {
 func TestKeyframeUnsupportedCodec(t *testing.T) {
 	sample := syncSample(t, "hevc-aac-8bit.mov")
 
-	for _, codec := range []string{"vp9", "av1", "", "HEVC"} {
+	for _, codec := range []string{"vp9", "mp3", "", "HEVC"} {
 		t.Run(codec, func(t *testing.T) {
 			_, err := decode.Keyframe(codec, sample.Config, sample.NALLengthSize, sample.Data)
 			if !errors.Is(err, decode.ErrUnsupportedCodec) {

@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/autobutler-org/sprocket/internal/isobmff"
+	"github.com/autobutler-org/sprocket/internal/matroska"
 )
 
 // ErrIncompatible means the file's codecs have no valid representation in the
@@ -26,6 +27,8 @@ const (
 	MP4     Container = "mp4"
 	M4V     Container = "m4v"
 	ThreeGP Container = "3gp"
+	MKV     Container = "mkv"
+	WebM    Container = "webm"
 )
 
 // CanRemux reports whether a probed file can be moved into target without
@@ -65,14 +68,28 @@ func CanRemux(info Info, target Container) bool {
 // or cut short returns ErrCorrupt. An error from w is returned as it came, so
 // errors.Is finds the caller's own.
 func Remux(r io.ReaderAt, size int64, w io.Writer, target Container) error {
-	file, err := isobmff.Parse(r, size)
+	file, err := open(r, size)
 	if err != nil {
-		return containerError(err)
+		return err
 	}
-	if err := isobmff.Write(w, file, isobmff.Target(target), nil); err != nil {
-		return writeError(err)
+	return writeInto(w, file, target, nil)
+}
+
+// writeInto writes a parsed source into the target container, cut down to
+// ranges where the caller passed any. It is the one place that pairs a source
+// family with a writer, so Remux and Trim cannot disagree about which pairs
+// exist.
+func writeInto(w io.Writer, file container, target Container, ranges map[uint32]isobmff.Range) error {
+	if file.mkv != nil {
+		return fmt.Errorf("%w: a Matroska or WebM source cannot be written into %s yet, only read",
+			ErrUnsupportedContainer, target)
 	}
-	return nil
+	switch out := isobmff.Target(target); out {
+	case isobmff.TargetMKV, isobmff.TargetWebM:
+		return writeError(matroska.Write(w, file.mp4, out, ranges))
+	default:
+		return writeError(isobmff.Write(w, file.mp4, out, ranges))
+	}
 }
 
 // writeError maps a muxer error onto this package's sentinels, for Remux and
@@ -86,7 +103,8 @@ func writeError(err error) error {
 	case errors.Is(err, isobmff.ErrUnsupportedSource), errors.Is(err, isobmff.ErrUnsupportedTarget):
 		return fmt.Errorf("%w: %w", ErrUnsupportedContainer, err)
 	case errors.Is(err, isobmff.ErrTruncated), errors.Is(err, isobmff.ErrMalformed),
-		errors.Is(err, isobmff.ErrNoSyncSample):
+		errors.Is(err, isobmff.ErrNoSyncSample), errors.Is(err, matroska.ErrTruncated),
+		errors.Is(err, matroska.ErrMalformed):
 		return fmt.Errorf("%w: %w", ErrCorrupt, err)
 	default:
 		return err

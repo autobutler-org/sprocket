@@ -43,7 +43,7 @@ func (f *File) TrimRanges(start, end time.Duration) (map[uint32]Range, time.Dura
 			return nil, 0, err
 		}
 		anchor = sync
-		actual = video.movieTime(video.tables.compositionTicks(sync), f.Timescale)
+		actual = video.MovieTime(video.tables.compositionTicks(sync), f.Timescale)
 	}
 
 	span := max(end-actual, 0)

@@ -1,0 +1,10 @@
+{
+  "duration": 2.008000,
+  "width": 128,
+  "height": 72,
+  "video_codec": "av1",
+  "audio_codec": "opus",
+  "bitrate": 98151,
+  "framerate": 24,
+  "rotation": 0
+}

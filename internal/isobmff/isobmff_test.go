@@ -37,7 +37,7 @@ func openCorpus(t *testing.T, name string) (*File, corpus.Golden, int64) {
 }
 
 func TestParseMatchesGoldens(t *testing.T) {
-	names, err := corpus.Files()
+	names, err := corpus.ISOBMFFFiles()
 	if err != nil {
 		t.Fatalf("list corpus: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestParseRejectsMalformedInput(t *testing.T) {
 }
 
 func TestParseRejectsATruncatedCorpusFile(t *testing.T) {
-	names, err := corpus.Files()
+	names, err := corpus.ISOBMFFFiles()
 	if err != nil {
 		t.Fatalf("list corpus: %v", err)
 	}

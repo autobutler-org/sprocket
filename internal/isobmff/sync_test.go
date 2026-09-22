@@ -106,7 +106,7 @@ func TestReadNearestSyncSampleFallsForwardToTheFirstKeyframe(t *testing.T) {
 func TestReadNearestSyncSampleMatchesReadSyncSampleOnTheCorpus(t *testing.T) {
 	// Every corpus file holds exactly one keyframe, so nearest and at-or-before
 	// have to agree everywhere, fragmented file included.
-	names, err := corpus.Files()
+	names, err := corpus.ISOBMFFFiles()
 	if err != nil {
 		t.Fatalf("list corpus: %v", err)
 	}

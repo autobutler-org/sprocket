@@ -1,10 +1,9 @@
 package sprocket
 
 import (
+	"fmt"
 	"io"
 	"time"
-
-	"github.com/autobutler-org/sprocket/internal/isobmff"
 )
 
 // Trim writes the part of the file r holds between start and end into w as a
@@ -40,16 +39,19 @@ import (
 // whose video track declares no keyframe at all. An error from w is returned as
 // it came, so errors.Is finds the caller's own.
 func Trim(r io.ReaderAt, size int64, w io.Writer, target Container, start, end time.Duration) (time.Duration, error) {
-	file, err := isobmff.Parse(r, size)
+	file, err := open(r, size)
 	if err != nil {
-		return 0, containerError(err)
+		return 0, err
 	}
-	ranges, actual, err := file.TrimRanges(start, end)
+	if file.mkv != nil {
+		return 0, fmt.Errorf("%w: a Matroska or WebM source cannot be trimmed yet, only read", ErrUnsupportedContainer)
+	}
+	ranges, actual, err := file.mp4.TrimRanges(start, end)
 	if err != nil {
 		return 0, writeError(err)
 	}
-	if err := isobmff.Write(w, file, isobmff.Target(target), ranges); err != nil {
-		return 0, writeError(err)
+	if err := writeInto(w, file, target, ranges); err != nil {
+		return 0, err
 	}
 	return actual, nil
 }
