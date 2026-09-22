@@ -207,14 +207,21 @@ func (s *sampleTables) sampleTime(index uint32) uint64 {
 func (s *sampleTables) compositionOffset(index uint32) int64 {
 	var seen uint32
 	for off := 0; off+8 <= len(s.ctts); off += 8 {
-		count, raw := be32(s.ctts[off:]), be32(s.ctts[off+4:])
+		count := be32(s.ctts[off:])
 		if index < seen+count {
-			if s.cttsSigned {
-				return int64(int32(raw))
-			}
-			return int64(raw)
+			return cttsValue(s.ctts[off+4:], s.cttsSigned)
 		}
 		seen += count
+	}
+	return 0
+}
+
+// compositionTicks is when a sample is displayed on the track's media timeline:
+// its decode time shifted by its composition offset, which may be negative, and
+// clamped at zero the way compositionTime clamps a fragment's.
+func (s *sampleTables) compositionTicks(index uint32) uint64 {
+	if at := int64(s.sampleTime(index)) + s.compositionOffset(index); at > 0 {
+		return uint64(at)
 	}
 	return 0
 }

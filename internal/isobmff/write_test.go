@@ -16,7 +16,7 @@ func writeCorpus(t *testing.T, name string, target Target) (src, out *File) {
 
 	src, _, _ = openCorpus(t, name)
 	var buf bytes.Buffer
-	if err := Write(&buf, src, target); err != nil {
+	if err := Write(&buf, src, target, nil); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
 
@@ -35,7 +35,7 @@ func trackPayload(t *testing.T, f *File, track *Track) []byte {
 	t.Helper()
 
 	var out []byte
-	err := track.tables.eachRange(func(r byteRange) error {
+	err := track.tables.eachRange(0, track.tables.count, func(r byteRange) error {
 		buf := make([]byte, r.size)
 		if _, err := f.r.ReadAt(buf, r.offset); err != nil {
 			return err
@@ -167,7 +167,7 @@ func TestWriteRefusesWhatItCannotCarry(t *testing.T) {
 				file = parsed
 			}
 
-			if err := Write(io.Discard, file, tc.target); !errors.Is(err, tc.want) {
+			if err := Write(io.Discard, file, tc.target, nil); !errors.Is(err, tc.want) {
 				t.Errorf("error = %v, want %v", err, tc.want)
 			}
 		})
@@ -205,6 +205,259 @@ func TestWriteKeepsACompactSampleSizeTableCompact(t *testing.T) {
 		if err != nil || got != want {
 			t.Errorf("sample %d = %d (%v), want %d", i, got, err, want)
 		}
+	}
+}
+
+// runTables builds an stbl whose every table is cut mid-entry by a slice of
+// samples 2 through 6: three stts runs, two ctts runs, sync samples on either
+// side of the span, nine sizes, and three chunks of three.
+func runTables(t *testing.T) *sampleTables {
+	t.Helper()
+
+	stbl := concat(
+		box("stts", concat([]byte{0, 0, 0, 0}, put32(3),
+			put32(3), put32(10), put32(2), put32(20), put32(4), put32(30))),
+		box("ctts", concat([]byte{0, 0, 0, 0}, put32(2), put32(4), put32(5), put32(5), put32(7))),
+		box("stss", concat([]byte{0, 0, 0, 0}, put32(3), put32(1), put32(4), put32(8))),
+		box("stsz", concat([]byte{0, 0, 0, 0}, put32(0), put32(9),
+			put32(10), put32(20), put32(30), put32(40), put32(50), put32(60), put32(70), put32(80), put32(90))),
+		box("stsc", concat([]byte{0, 0, 0, 0}, put32(1), put32(1), put32(3), put32(1))),
+		box("stco", concat([]byte{0, 0, 0, 0}, put32(3), put32(100), put32(1000), put32(2000))),
+	)
+
+	var track Track
+	if err := track.parseStbl(stbl, 0); err != nil {
+		t.Fatalf("parse the handcrafted stbl: %v", err)
+	}
+	return &track.tables
+}
+
+func TestSliceCutsTheRunTablesAtBothEnds(t *testing.T) {
+	const first, n = 2, 5
+
+	cut, err := runTables(t).slice(first, n)
+	if err != nil {
+		t.Fatalf("slice: %v", err)
+	}
+
+	if cut.count != n {
+		t.Errorf("count = %d, want %d", cut.count, n)
+	}
+	// The point of slicing rather than expanding: the runs stay runs. Three
+	// stts entries in, three out, with the first and last trimmed.
+	if got := len(cut.stts) / 8; got != 3 {
+		t.Errorf("stts holds %d runs, want 3", got)
+	}
+	if got := len(cut.ctts) / 8; got != 2 {
+		t.Errorf("ctts holds %d runs, want 2", got)
+	}
+
+	// The first kept sample decodes at zero, and the rest keep their spacing.
+	for i, want := range []uint64{0, 10, 30, 50, 80} {
+		if got := cut.sampleTime(uint32(i)); got != want {
+			t.Errorf("sample %d decodes at %d, want %d", i, got, want)
+		}
+	}
+	if got := cut.duration(); got != 110 {
+		t.Errorf("duration = %d ticks, want 110", got)
+	}
+	// The composition offsets came across less the span's earliest composition
+	// time, which was sample 2's five ticks, so the cut is displayed from zero.
+	for i, want := range []int64{0, 0, 2, 2, 2} {
+		if got := cut.compositionOffset(uint32(i)); got != want {
+			t.Errorf("sample %d composition offset = %d, want %d", i, got, want)
+		}
+	}
+	if got := cut.compositionTicks(0); got != 0 {
+		t.Errorf("the first sample is displayed at %d, want 0", got)
+	}
+	for i, want := range []uint32{30, 40, 50, 60, 70} {
+		got, err := cut.sampleSize(uint32(i))
+		if err != nil || got != want {
+			t.Errorf("sample %d is %d bytes (%v), want %d", i, got, err, want)
+		}
+	}
+
+	// Sample 3 of the source was a sync sample and is sample 1 here; the ones
+	// at 0 and 7 fall outside the span and are gone with it.
+	if got := len(cut.stss) / 4; got != 1 {
+		t.Fatalf("stss holds %d entries, want 1", got)
+	}
+	if sync, ok := cut.syncAtOrBefore(4); !ok || sync != 1 {
+		t.Errorf("sync at or before sample 4 = %d (%v), want 1", sync, ok)
+	}
+	if _, ok := cut.syncAtOrBefore(0); ok {
+		t.Error("sample 0 reports a sync sample at or before it, and the span starts mid-GOP")
+	}
+}
+
+func TestSliceNormalizesToASignedCompositionTable(t *testing.T) {
+	// Three samples ten ticks apart, the first displayed after the second: the
+	// reordering B frames give a cut. Subtracting the earliest composition time
+	// puts the second sample at zero and drives the rest below it, which is
+	// what the signed form of the table is for.
+	stbl := concat(
+		box("stts", concat([]byte{0, 0, 0, 0}, put32(1), put32(3), put32(10))),
+		box("ctts", concat([]byte{0, 0, 0, 0}, put32(2), put32(1), put32(20), put32(2), put32(0))),
+		box("stsz", concat([]byte{0, 0, 0, 0}, put32(1), put32(3))),
+	)
+
+	var track Track
+	if err := track.parseStbl(stbl, 0); err != nil {
+		t.Fatalf("parse the handcrafted stbl: %v", err)
+	}
+	cut, err := track.tables.slice(0, 3)
+	if err != nil {
+		t.Fatalf("slice: %v", err)
+	}
+
+	if !cut.cttsSigned {
+		t.Error("the cut has negative composition offsets and did not ask for the signed table")
+	}
+	for i, want := range []int64{10, -10, -10} {
+		if got := cut.compositionOffset(uint32(i)); got != want {
+			t.Errorf("sample %d composition offset = %d, want %d", i, got, want)
+		}
+	}
+	// Relative timing is untouched: every sample moved by the same ten ticks.
+	for i, want := range []uint64{10, 0, 10} {
+		if got := cut.compositionTicks(uint32(i)); got != want {
+			t.Errorf("sample %d is displayed at %d, want %d", i, got, want)
+		}
+	}
+
+	// And the signed table survives being written and read back.
+	var b boxWriter
+	b.entryTable("ctts", 1, 8, cut.ctts)
+	var out Track
+	if err := out.parseStbl(concat(b.buf, box("stsz", concat([]byte{0, 0, 0, 0}, put32(1), put32(3)))), 0); err != nil {
+		t.Fatalf("parse what was written: %v", err)
+	}
+	if got := out.tables.compositionOffset(1); got != -10 {
+		t.Errorf("sample 1 read back at %d, want -10", got)
+	}
+}
+
+func TestEachRangeWalksASpan(t *testing.T) {
+	// Samples 2 through 6 of three chunks of three: the tail of the first
+	// chunk, all of the second, and the head of the third.
+	want := []byteRange{
+		{offset: 130, size: 30},
+		{offset: 1000, size: 150},
+		{offset: 2000, size: 70},
+	}
+
+	var got []byteRange
+	if err := runTables(t).eachRange(2, 5, func(r byteRange) error {
+		got = append(got, r)
+		return nil
+	}); err != nil {
+		t.Fatalf("walk the span: %v", err)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("ranges = %v, want %v", got, want)
+	}
+}
+
+func TestSliceRepacksACompactSampleSizeTable(t *testing.T) {
+	// Four-bit entries pack two to a byte, so a span starting on an odd sample
+	// starts halfway through one and has to be repacked rather than resliced.
+	const fieldSize = 4
+	stz2 := box("stz2", concat([]byte{0, 0, 0, 0}, []byte{0, 0, 0, fieldSize}, put32(5),
+		[]byte{0x12, 0x34, 0x50}))
+
+	var track Track
+	if err := track.parseStbl(stz2, 0); err != nil {
+		t.Fatalf("parse the handcrafted stz2: %v", err)
+	}
+
+	cut, err := track.tables.slice(1, 3)
+	if err != nil {
+		t.Fatalf("slice: %v", err)
+	}
+	for i, want := range []uint32{2, 3, 4} {
+		got, err := cut.sampleSize(uint32(i))
+		if err != nil || got != want {
+			t.Errorf("sample %d is %d bytes (%v), want %d", i, got, err, want)
+		}
+	}
+}
+
+// rangePayload reads n of a track's samples from first, end to end.
+func rangePayload(t *testing.T, f *File, track *Track, first, n uint32) []byte {
+	t.Helper()
+
+	var out []byte
+	err := track.tables.eachRange(first, n, func(r byteRange) error {
+		buf := make([]byte, r.size)
+		if _, err := f.r.ReadAt(buf, r.offset); err != nil {
+			return err
+		}
+		out = append(out, buf...)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk samples: %v", err)
+	}
+	return out
+}
+
+func TestWriteCutsOneTrackAndCarriesTheOther(t *testing.T) {
+	// The keyframe file's second GOP, with the audio track left whole: one
+	// output, one cut track and one untouched one.
+	const first, n = 24, 29
+
+	src, _, _ := openCorpus(t, "h264-gop12.mp4")
+	video := src.VideoTrack()
+
+	var buf bytes.Buffer
+	ranges := map[uint32]Range{video.ID: {First: first, Last: first + n - 1}}
+	if err := Write(&buf, src, TargetMP4, ranges); err != nil {
+		t.Fatalf("write the cut: %v", err)
+	}
+	out, err := Parse(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("parse the cut: %v", err)
+	}
+
+	cutVideo, keptAudio := out.VideoTrack(), out.AudioTrack()
+	if got := cutVideo.SampleCount(); got != n {
+		t.Errorf("the cut video holds %d samples, want %d", got, n)
+	}
+	if got, want := keptAudio.SampleCount(), src.AudioTrack().SampleCount(); got != want {
+		t.Errorf("the audio track holds %d samples, want the source's %d", got, want)
+	}
+	// The payload is the point: the samples that were asked for, in order.
+	if !bytes.Equal(trackPayload(t, out, cutVideo), rangePayload(t, src, video, first, n)) {
+		t.Error("the cut video's samples are not the source's")
+	}
+	// The cut invalidated the video's edit list, and left the audio's alone.
+	if len(cutVideo.Edits) != 0 {
+		t.Errorf("the cut video carries an edit list: %+v", cutVideo.Edits)
+	}
+	if !slices.Equal(keptAudio.Edits, src.AudioTrack().Edits) {
+		t.Errorf("the audio edit list = %+v, want the source's %+v", keptAudio.Edits, src.AudioTrack().Edits)
+	}
+	if got, want := cutVideo.MediaDuration, uint64(n*512); got != want {
+		t.Errorf("the cut video declares %d ticks, want %d", got, want)
+	}
+}
+
+func TestWriteRefusesARangeTheTrackDoesNotHold(t *testing.T) {
+	src, _, _ := openCorpus(t, "h264-gop12.mp4")
+	id := src.VideoTrack().ID
+	count := src.VideoTrack().SampleCount()
+
+	for name, span := range map[string]Range{
+		"past the end": {First: 0, Last: count},
+		"backwards":    {First: 4, Last: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := Write(io.Discard, src, TargetMP4, map[uint32]Range{id: span})
+			if !errors.Is(err, ErrMalformed) {
+				t.Errorf("error = %v, want ErrMalformed", err)
+			}
+		})
 	}
 }
 

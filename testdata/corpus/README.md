@@ -5,10 +5,12 @@ every public function has something to test against.
 
 Every file is two seconds of the same synthetic content: a 128x72 `testsrc2` pattern
 at 24 fps and a 440 Hz `sine` tone. 128x72 is not square on purpose, so a rotated
-file is distinguishable from its stored dimensions. `prores-pcm.mov` is the one
-exception at a quarter of a second, because ProRes is an intra codec and costs
-orders of magnitude more per frame than the rest. The ten media files total 196,159
-bytes; the directory including the goldens and the script is 264 KB on disk.
+file is distinguishable from its stored dimensions. Two files are exceptions:
+`prores-pcm.mov` is a quarter of a second, because ProRes is an intra codec and costs
+orders of magnitude more per frame than the rest, and `h264-gop12.mp4` is three
+seconds, because a trim needs room for more than one keyframe. The eleven media files
+total 227,105 bytes; the directory including the goldens and the script is 300 KB on
+disk.
 
 ## Files
 
@@ -16,6 +18,7 @@ bytes; the directory including the goldens and the script is 264 KB on disk.
 | --- | --- |
 | `h264-aac.mp4` | H.264 + AAC in mp4, and the `moov`-at-the-end case, which is the mp4 muxer's default |
 | `h264-aac-faststart.mp4` | the same content with `moov` moved to the front |
+| `h264-gop12.mp4` | three seconds with a keyframe every twelve frames, at 0, 0.5, 1.0, 1.5, 2.0, and 2.5 seconds: the file a trim can snap to a keyframe other than the first |
 | `hevc-aac-8bit.mov` | HEVC + AAC in mov, 8-bit, `hvc1` sample entry |
 | `hevc-aac-10bit.mov` | HEVC + AAC in mov, 10-bit (`main10`, `yuv420p10le`) |
 | `rotate-90.mp4` | a `tkhd` matrix of 90 degrees clockwise |

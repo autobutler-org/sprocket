@@ -92,9 +92,21 @@ const copyBufferSize = 256 << 10
 // would ever take, which is a branch no test can reach.
 const mdatHeaderSize = largeBoxHeaderSize
 
+// Range is an inclusive run of one track's samples, by zero-based index. It is
+// how Trim asks Write for part of a track rather than all of it.
+type Range struct{ First, Last uint32 }
+
 // Write writes src into w as a file of the target container: an ftyp, then a
 // moov holding every track's tables, then one mdat with the sample payload
 // copied verbatim. Nothing is re-encoded and no sample is looked at.
+//
+// ranges cuts each track down to a span of its samples, keyed by track ID. A
+// track with no entry, and so every track when the map is nil, is written
+// whole, which is what a remux asks for. A cut track's run tables are sliced at
+// both ends and its edit list is dropped: the list described the source's
+// timeline, and the cut no longer has it. See TrimRanges, which picks the
+// spans, and the sprocket package documentation under "Trim" for what that
+// costs a caller.
 //
 // The header goes first. The source's own tables give every sample's size, so
 // the output's chunk offsets are known before a byte of payload moves, and the
@@ -105,8 +117,9 @@ const mdatHeaderSize = largeBoxHeaderSize
 // Only video and audio tracks are carried over; a timecode or subtitle track
 // is dropped. A fragmented source, or one with no video or audio track,
 // returns ErrUnsupportedSource. A codec the target cannot hold returns
-// ErrIncompatibleCodec, and a target this package does not write returns
-// ErrUnsupportedTarget.
+// ErrIncompatibleCodec, a target this package does not write returns
+// ErrUnsupportedTarget, and a range that runs past the samples a track holds
+// returns ErrMalformed.
 //
 // ponytail: every track's samples go into one chunk, laid out one track after
 // another. That is valid and it is header-first, but it is not interleaved, so
@@ -114,12 +127,7 @@ const mdatHeaderSize = largeBoxHeaderSize
 // Interleaving by time is the upgrade: group samples into chunks of a second
 // or so and emit a chunk per track in turn, which turns the single stsc and
 // stco entry per track into one per chunk and nothing else.
-//
-// ponytail: Trim (#10) wants the same writer over a sample range per track
-// rather than the whole track. It is not free here: stts, ctts, stss, and stsz
-// are copied out of the source verbatim, and a range means slicing every one
-// of them, splitting the run tables at the cut. Add the range when Trim lands.
-func Write(w io.Writer, src *File, target Target) error {
+func Write(w io.Writer, src *File, target Target, ranges map[uint32]Range) error {
 	brands, ok := targetBrands[target]
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrUnsupportedTarget, target)
@@ -128,7 +136,7 @@ func Write(w io.Writer, src *File, target Target) error {
 		return fmt.Errorf("%w: the source is fragmented, and its samples are described by moof boxes rather than by the moov's tables", ErrUnsupportedSource)
 	}
 
-	tracks := make([]*Track, 0, len(src.Tracks))
+	cuts := make([]cutTrack, 0, len(src.Tracks))
 	for _, t := range src.Tracks {
 		if t.Handler != "vide" && t.Handler != "soun" {
 			continue
@@ -137,16 +145,21 @@ func Write(w io.Writer, src *File, target Target) error {
 			return fmt.Errorf("%w: track %d carries %s, which does not fit in %s",
 				ErrIncompatibleCodec, t.ID, t.Entry.Codec, target)
 		}
-		tracks = append(tracks, t)
+		span, cut := ranges[t.ID]
+		c, err := newCutTrack(t, span, cut)
+		if err != nil {
+			return err
+		}
+		cuts = append(cuts, c)
 	}
-	if len(tracks) == 0 {
+	if len(cuts) == 0 {
 		return fmt.Errorf("%w: it carries no video or audio track", ErrUnsupportedSource)
 	}
 
-	payload := make([]int64, len(tracks))
+	payload := make([]int64, len(cuts))
 	var total int64
-	for i, t := range tracks {
-		n, err := t.tables.payloadBytes()
+	for i, c := range cuts {
+		n, err := c.src.tables.spanBytes(c.first, c.n)
 		if err != nil {
 			return err
 		}
@@ -154,9 +167,9 @@ func Write(w io.Writer, src *File, target Target) error {
 	}
 
 	ftyp := ftypBox(brands)
-	moov, offsetAt := buildMoov(src, tracks)
+	moov, offsetAt := buildMoov(src, cuts, movieTicks(src, cuts, len(ranges) > 0))
 	at := int64(len(ftyp)) + int64(len(moov)) + mdatHeaderSize
-	for i := range tracks {
+	for i := range cuts {
 		if offsetAt[i] >= 0 {
 			binary.BigEndian.PutUint64(moov[offsetAt[i]:], uint64(at))
 		}
@@ -168,12 +181,77 @@ func Write(w io.Writer, src *File, target Target) error {
 	}
 
 	buf := make([]byte, copyBufferSize)
-	for _, t := range tracks {
-		if err := copyPayload(w, src.r, &t.tables, buf); err != nil {
+	for _, c := range cuts {
+		if err := copyPayload(w, src.r, &c.src.tables, c.first, c.n, buf); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// cutTrack is one output track: the source track, the span of its samples the
+// output holds, and the tables and durations its headers are built from.
+type cutTrack struct {
+	src      *Track
+	first, n uint32
+	// tables describes the span. It is the source's own when the whole track is
+	// written, and a slice of them when it is cut. The payload copy reads the
+	// source's tables either way, since only those say where the samples live.
+	tables *sampleTables
+	// media is the mdhd duration in the track's media ticks.
+	media uint64
+	// edits is the edts to copy, nil for a cut track.
+	edits []byte
+}
+
+// newCutTrack works out what to write for one track. Without a range the track
+// comes across as it stands, declared duration and edit list included. With
+// one, the run tables are sliced and the duration is the kept samples' own, and
+// the edit list goes: it measured a timeline the cut does not have.
+func newCutTrack(t *Track, span Range, cut bool) (cutTrack, error) {
+	if !cut {
+		return cutTrack{src: t, n: t.tables.count, tables: &t.tables, media: t.MediaDuration, edits: t.edts}, nil
+	}
+	if span.Last < span.First || uint64(span.Last) >= uint64(t.tables.count) {
+		return cutTrack{}, fmt.Errorf("%w: track %d has %d samples, so the range %d..%d is not in it",
+			ErrMalformed, t.ID, t.tables.count, span.First, span.Last)
+	}
+	n := span.Last - span.First + 1
+	tables, err := t.tables.slice(span.First, n)
+	if err != nil {
+		return cutTrack{}, err
+	}
+	return cutTrack{src: t, first: span.First, n: n, tables: tables, media: tables.duration()}, nil
+}
+
+// duration is the track's duration on the movie timescale, which is what tkhd
+// stores. An edit list already measures there, so its entries are summed where
+// there is one; a cut track has none, so its kept media duration is converted.
+func (c cutTrack) duration(f *File) uint64 {
+	if len(c.edits) > 0 {
+		var edited uint64
+		for _, e := range c.src.Edits {
+			edited += e.Duration
+		}
+		if edited > 0 {
+			return edited
+		}
+	}
+	return durationToTicks(ticksToDuration(c.media, c.src.Timescale), movieTimescale(f))
+}
+
+// movieTicks is the mvhd duration to write. A whole-file write keeps the
+// source's own, so the output probes to what the input probed to; a cut has to
+// derive it, and the movie runs as long as its longest track.
+func movieTicks(f *File, cuts []cutTrack, trimmed bool) uint64 {
+	if !trimmed {
+		return movieDuration(f)
+	}
+	var longest uint64
+	for _, c := range cuts {
+		longest = max(longest, c.duration(f))
+	}
+	return longest
 }
 
 // writeAll writes each part in turn, reporting the first failure.
@@ -210,7 +288,7 @@ func mdatHeader(payload int64) []byte {
 // them. Chunks that sit back to back in the source join into one
 // io.CopyBuffer, so a track the source already laid out contiguously moves in
 // a single copy, and every copy shares the buffer the caller owns.
-func copyPayload(w io.Writer, r io.ReaderAt, s *sampleTables, buf []byte) error {
+func copyPayload(w io.Writer, r io.ReaderAt, s *sampleTables, first, n uint32, buf []byte) error {
 	var run byteRange
 	flush := func() error {
 		if run.size == 0 {
@@ -227,7 +305,7 @@ func copyPayload(w io.Writer, r io.ReaderAt, s *sampleTables, buf []byte) error 
 		return nil
 	}
 
-	if err := s.eachRange(func(next byteRange) error {
+	if err := s.eachRange(first, n, func(next byteRange) error {
 		if run.size > 0 && run.offset+run.size == next.offset {
 			run.size += next.size
 			return nil
@@ -247,25 +325,25 @@ func copyPayload(w io.Writer, r io.ReaderAt, s *sampleTables, buf []byte) error 
 // per track, the position in it of that track's chunk offset field, which only
 // the finished layout can fill in. A track with no samples has no offset field
 // and reports -1.
-func buildMoov(src *File, tracks []*Track) (moov []byte, offsetAt []int) {
+func buildMoov(src *File, cuts []cutTrack, duration uint64) (moov []byte, offsetAt []int) {
 	var b boxWriter
 	start := b.open("moov")
-	b.mvhd(src, tracks)
-	offsetAt = make([]int, len(tracks))
-	for i, t := range tracks {
-		offsetAt[i] = b.trak(src, t)
+	b.mvhd(src, cuts, duration)
+	offsetAt = make([]int, len(cuts))
+	for i, c := range cuts {
+		offsetAt[i] = b.trak(src, c)
 	}
 	b.close(start)
 	return b.buf, offsetAt
 }
 
 // mvhd writes the movie header. ISO/IEC 14496-12 8.2.2.
-func (b *boxWriter) mvhd(f *File, tracks []*Track) {
+func (b *boxWriter) mvhd(f *File, cuts []cutTrack, duration uint64) {
 	start := b.full("mvhd", 1, 0)
 	b.u64(0) // creation time
 	b.u64(0) // modification time
 	b.u32(movieTimescale(f))
-	b.u64(movieDuration(f))
+	b.u64(duration)
 	b.u32(one16)  // rate, 1.0
 	b.u16(0x0100) // volume, full
 	b.u16(0)      // reserved
@@ -275,8 +353,8 @@ func (b *boxWriter) mvhd(f *File, tracks []*Track) {
 	}
 	b.zeros(24) // pre_defined
 	var next uint32
-	for _, t := range tracks {
-		next = max(next, t.ID+1)
+	for _, c := range cuts {
+		next = max(next, c.src.ID+1)
 	}
 	b.u32(next)
 	b.close(start)
@@ -302,34 +380,36 @@ func movieDuration(f *File) uint64 {
 }
 
 // trak writes one track and returns the position of its chunk offset field.
-func (b *boxWriter) trak(f *File, t *Track) int {
+func (b *boxWriter) trak(f *File, c cutTrack) int {
 	start := b.open("trak")
-	b.tkhd(f, t)
-	// The edit list is copied rather than rebuilt: it is what makes the output
-	// start where the input started, and a writer that re-derived it would be
-	// a second chance to get the priming delay wrong.
-	if len(t.edts) > 0 {
+	b.tkhd(f, c)
+	// A whole track's edit list is copied rather than rebuilt: it is what makes
+	// the output start where the input started, and a writer that re-derived it
+	// would be a second chance to get the priming delay wrong. A cut track has
+	// none to copy, because the cut invalidated it.
+	if len(c.edits) > 0 {
 		edts := b.open("edts")
-		b.raw(t.edts)
+		b.raw(c.edits)
 		b.close(edts)
 	}
-	at := b.mdia(t)
+	at := b.mdia(c)
 	b.close(start)
 	return at
 }
 
 // tkhd writes the track header, matrix and all, so rotation survives the trip.
 // ISO/IEC 14496-12 8.3.2.
-func (b *boxWriter) tkhd(f *File, t *Track) {
+func (b *boxWriter) tkhd(f *File, c cutTrack) {
 	// The track is enabled and part of the movie.
 	const enabledInMovie = 0x000003
 
+	t := c.src
 	start := b.full("tkhd", 1, enabledInMovie)
 	b.u64(0) // creation time
 	b.u64(0) // modification time
 	b.u32(t.ID)
 	b.u32(0) // reserved
-	b.u64(trackDuration(f, t))
+	b.u64(c.duration(f))
 	b.zeros(8) // reserved
 	b.u16(0)   // layer
 	b.u16(0)   // alternate group
@@ -347,38 +427,24 @@ func (b *boxWriter) tkhd(f *File, t *Track) {
 	b.close(start)
 }
 
-// trackDuration is the track's duration on the movie timescale, which is what
-// tkhd stores. An edit list already measures there, so its entries are summed
-// where there is one; otherwise the media duration is converted.
-func trackDuration(f *File, t *Track) uint64 {
-	var edited uint64
-	for _, e := range t.Edits {
-		edited += e.Duration
-	}
-	if edited > 0 {
-		return edited
-	}
-	return durationToTicks(t.Duration(), movieTimescale(f))
-}
-
 // mdia writes the media box and returns the position of the chunk offset field.
-func (b *boxWriter) mdia(t *Track) int {
+func (b *boxWriter) mdia(c cutTrack) int {
 	start := b.open("mdia")
-	b.mdhd(t)
-	b.hdlr(t)
-	at := b.minf(t)
+	b.mdhd(c)
+	b.hdlr(c.src)
+	at := b.minf(c)
 	b.close(start)
 	return at
 }
 
 // mdhd writes the media header. ISO/IEC 14496-12 8.4.2.
-func (b *boxWriter) mdhd(t *Track) {
+func (b *boxWriter) mdhd(c cutTrack) {
 	start := b.full("mdhd", 1, 0)
 	b.u64(0) // creation time
 	b.u64(0) // modification time
-	b.u32(t.Timescale)
-	b.u64(t.MediaDuration)
-	b.u16(packLanguage(t.Language))
+	b.u32(c.src.Timescale)
+	b.u64(c.media)
+	b.u16(packLanguage(c.src.Language))
 	b.u16(0) // pre_defined
 	b.close(start)
 }
@@ -416,10 +482,10 @@ func (b *boxWriter) hdlr(t *Track) {
 
 // minf writes the media information box and returns the position of the chunk
 // offset field. ISO/IEC 14496-12 8.4.4.
-func (b *boxWriter) minf(t *Track) int {
+func (b *boxWriter) minf(c cutTrack) int {
 	start := b.open("minf")
 
-	if t.Handler == "soun" {
+	if c.src.Handler == "soun" {
 		smhd := b.full("smhd", 0, 0)
 		b.u16(0) // balance, centred
 		b.u16(0) // reserved
@@ -442,7 +508,7 @@ func (b *boxWriter) minf(t *Track) int {
 	b.close(dref)
 	b.close(dinf)
 
-	at := b.stbl(t)
+	at := b.stbl(c)
 	b.close(start)
 	return at
 }
