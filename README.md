@@ -4,8 +4,35 @@ A Go library that probes, thumbnails, trims, and remuxes video files without ffm
 
 ## Status
 
-Nothing is implemented yet. The module is empty and the API is undecided. Work is
-tracked in [the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
+`Probe` works on the ISOBMFF family: mp4, mov, m4v, 3gp, and 3g2. Thumbnail, Trim,
+and Remux are not written yet, and neither is Matroska, WebM, or MPEG-TS support.
+Work is tracked in [the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
+
+```go
+file, err := os.Open("clip.mp4")
+if err != nil {
+	return err
+}
+defer file.Close()
+
+stat, err := file.Stat()
+if err != nil {
+	return err
+}
+
+info, err := sprocket.Probe(file, stat.Size()) // *os.File is an io.ReaderAt
+if err != nil {
+	return err
+}
+fmt.Println(info.Duration, info.Width, info.Height, info.VideoCodec, info.Rotation)
+```
+
+`Probe` reads box headers and the movie header only, never the media payload, so a
+4 GiB file costs a few kilobytes of reads. Codec names are a documented, stable
+scheme, and so are the bitrate and frame rate rules; see the package documentation.
+Input that is not a container this library reads returns `ErrUnsupportedContainer`
+with no partial result, and headers that are malformed or cut short return
+`ErrCorrupt`.
 
 ## What it does
 
