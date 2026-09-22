@@ -95,3 +95,11 @@ make help         # every target
 ## License
 
 MIT No Attribution. See [LICENSE](LICENSE).
+
+Dependencies are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) with
+their licenses and the notices they carry. One of them, the HEVC decoder, puts it
+this way: "This software implements a decoder and an encoder. It gives you no special
+rights on the HEVC patents. HEVC is covered by patents held by several pools and by
+unpooled holders; if you distribute or use this software you may need a licence from
+them." No software license grants patent rights in HEVC or H.264, whoever wrote the
+decoder, so the same goes for sprocket.
