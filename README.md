@@ -8,6 +8,14 @@ A Go library that probes, thumbnails, trims, and remuxes video files without ffm
 and Remux are not written yet, and neither is Matroska, WebM, or MPEG-TS support.
 Work is tracked in [the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
 
+Keyframe decoding covers HEVC, and H.264 behind the `h264` build tag. The tag is
+there because H.264 is patent encumbered: Via LA's active AVC list still holds a
+patent mapped to core decoding that runs to November 2030 in the US, so opting in
+is a decision to take deliberately rather than one that arrives with `go get`.
+Build with `-tags h264` to compile the decoder in; without it an H.264 sample
+returns the unsupported-codec error naming the tag. That expiry is also when the
+decision gets looked at again.
+
 ```go
 file, err := os.Open("clip.mp4")
 if err != nil {
@@ -48,8 +56,9 @@ timestamps, offsets. The bulk of ffmpeg is codecs, and this library re-encodes
 nothing, so it needs no encoder and needs a decoder for one purpose only.
 
 Planned container support, in priority order: the ISOBMFF family (mp4, mov, m4v, 3gp,
-3g2), then Matroska and WebM, then MPEG-TS. Planned keyframe decoding: HEVC and H.264.
-VP9 has no known pure-Go path and will return the unsupported-codec error.
+3g2), then Matroska and WebM, then MPEG-TS. Keyframe decoding covers HEVC and, behind
+the `h264` build tag, H.264. VP9 has no known pure-Go path and returns the
+unsupported-codec error.
 
 ## What it does not do
 
@@ -92,6 +101,9 @@ make build/cross  # linux/arm64 and darwin/arm64, CGO off
 make help         # every target
 ```
 
+There are two builds of this library, with and without the `h264` build tag, so
+those targets each run twice and both configurations have to pass.
+
 ## License
 
 MIT No Attribution. See [LICENSE](LICENSE).
@@ -103,3 +115,11 @@ rights on the HEVC patents. HEVC is covered by patents held by several pools and
 unpooled holders; if you distribute or use this software you may need a licence from
 them." No software license grants patent rights in HEVC or H.264, whoever wrote the
 decoder, so the same goes for sprocket.
+
+H.264 is in the same position, and its decoder carries no patent notice of its own,
+so this is the only one sprocket's users get. AVC is covered by patents licensed through
+Via LA's AVC Patent Portfolio License and by holders outside that pool; if you
+distribute or use this software you may need a license from them. Via LA's published
+fee schedule counts a decoder on its own as one unit at the same rate as an encoder,
+so decoding is not a lighter position than encoding. That is what the `h264` build
+tag is for: nothing about H.264 is compiled in unless you ask for it.
