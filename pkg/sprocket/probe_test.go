@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/autobutler-org/sprocket"
 	"github.com/autobutler-org/sprocket/internal/corpus"
+	"github.com/autobutler-org/sprocket/pkg/sprocket"
 )
 
 func TestProbeMatchesCorpusGoldens(t *testing.T) {

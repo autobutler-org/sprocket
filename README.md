@@ -72,9 +72,10 @@ VP9 has no known pure-Go path and will return the unsupported-codec error.
 
 ## Package layout
 
-The root package `sprocket` holds the public API: the four operations, their result
-types, `CanRemux`, and the typed errors. Container parsers and muxers live under
-`internal/` until their API settles and there is a reason to expose them.
+`pkg/sprocket` holds the public API: the four operations, their result types,
+`CanRemux`, and the typed errors. Container parsers and muxers live under
+`internal/` until their API settles and there is a reason to expose them. No Go
+files sit at the module root.
 
 ## Development
 
