@@ -21,9 +21,9 @@
 //
 // # Status
 //
-// Probe and Thumbnail are implemented for the ISOBMFF family: mp4, mov, m4v,
-// 3gp, and 3g2. Keyframe decoding covers HEVC, and H.264 behind the h264 build
-// tag. Trim and Remux are not written yet, and neither is support for
+// Probe, Thumbnail, and Remux are implemented for the ISOBMFF family: mp4,
+// mov, m4v, 3gp, and 3g2. Keyframe decoding covers HEVC, and H.264 behind the
+// h264 build tag. Trim is not written yet, and neither is support for
 // Matroska, WebM, or MPEG-TS. See
 // https://github.com/autobutler-org/sprocket/issues/13.
 //
@@ -62,6 +62,66 @@
 // and so is H.264 in a build without the h264 build tag. A file with no video
 // track returns ErrNoVideo, which is a different thing: nothing is wrong with
 // the file, it just holds no picture.
+//
+// # Remux
+//
+// Remux moves the streams of an MP4-family file into another container of the
+// same family: mp4, m4v, or 3gp. Nothing is decoded and nothing is re-encoded.
+// The sample payload is copied verbatim as byte ranges, and the sample
+// descriptions, edit lists, and display matrices are copied verbatim too, so
+// the output probes and thumbnails to what the input did. Only video and audio
+// tracks come across; a timecode or subtitle track is dropped.
+//
+// The output is header-first. The source's sample tables already give every
+// sample's size, so the output's chunk offsets are known before a byte of
+// payload is written, and the ftyp, the moov, and then the mdat go out in that
+// order. Probing the result therefore costs a read of its head, and a player
+// can start on it before it has the whole file.
+//
+// Each track's samples are written as one chunk, one track after another,
+// rather than interleaved by time. That is valid and it keeps the writer
+// honest about memory, but a player streaming a long file has to seek between
+// the video and the audio. Interleaving is the upgrade, and it changes nothing
+// a caller can see.
+//
+// A fragmented source is not remuxed. Its samples are described by its moof
+// boxes rather than by the movie header, and the writer builds its output from
+// the movie header, so a fragmented input returns ErrUnsupportedContainer.
+//
+// # Remux compatibility
+//
+// Not every stream fits every container: a MOV carrying ProRes video or PCM
+// audio has no valid representation in a normal MP4. The table below is the
+// whole answer, and it is an allowlist, so a codec that does not appear is
+// refused everywhere. CanRemux and Remux read the same table, so the answer a
+// caller is given ahead of time and the answer a remux acts on cannot drift.
+//
+//	codec   containers it may be written into
+//	h264    mp4, m4v, 3gp
+//	hevc    mp4, m4v, 3gp
+//	av1     mp4
+//	vp9     mp4
+//	aac     mp4, m4v, 3gp
+//	mp3     mp4, m4v
+//	opus    mp4
+//	alac    mp4, m4v
+//	ac-3    mp4, m4v
+//	ec-3    mp4, m4v
+//	fLaC    mp4
+//	samr    3gp
+//	sawb    3gp
+//
+// alac, ac-3, and ec-3 are on the list because all three are registered for
+// the MP4 family: alac through Apple's own registration, and the two Dolby
+// formats through ETSI TS 102 366 Annex F.
+//
+// What the table refuses, and why it is worth naming, is what a MOV can carry
+// and an MP4 cannot: ProRes, stored as apch, apcn, apcs, apco, or ap4h, and
+// uncompressed audio, stored as sowt, twos, lpcm, in24, in32, fl32, fl64, raw,
+// NONE, ulaw, or alaw. Those arrive here under their four-character codes, as
+// "Codec names" describes, and none of them is on the list. Remuxing one
+// returns ErrIncompatible naming the codec and the container that refused it,
+// and CanRemux reports false for the same pair.
 //
 // # Codec names
 //

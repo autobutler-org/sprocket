@@ -2,6 +2,7 @@ package isobmff
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -105,5 +106,8 @@ func FuzzParse(f *testing.F) {
 		}
 		_, _ = file.ReadSyncSample(0)
 		_, _ = file.ReadSyncSample(time.Hour)
+		// The muxer reads the same untrusted tables the lookups do, and it
+		// walks every sample rather than one, so it goes through the same door.
+		_ = Write(io.Discard, file, TargetMP4)
 	})
 }

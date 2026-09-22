@@ -5,8 +5,10 @@ every public function has something to test against.
 
 Every file is two seconds of the same synthetic content: a 128x72 `testsrc2` pattern
 at 24 fps and a 440 Hz `sine` tone. 128x72 is not square on purpose, so a rotated
-file is distinguishable from its stored dimensions. The nine media files total
-160,764 bytes; the directory including the goldens and the script is 216 KB on disk.
+file is distinguishable from its stored dimensions. `prores-pcm.mov` is the one
+exception at a quarter of a second, because ProRes is an intra codec and costs
+orders of magnitude more per frame than the rest. The ten media files total 196,159
+bytes; the directory including the goldens and the script is 264 KB on disk.
 
 ## Files
 
@@ -21,6 +23,7 @@ file is distinguishable from its stored dimensions. The nine media files total
 | `rotate-270.mp4` | a `tkhd` matrix of 270 degrees clockwise |
 | `no-audio.mp4` | video with no audio track |
 | `fragmented.mp4` | fragmented mp4: an empty `moov` followed by `moof`/`mdat` pairs |
+| `prores-pcm.mov` | ProRes proxy + 16-bit PCM in mov: the pair no mp4 can hold, which the remux compatibility table has to refuse |
 
 Later waves add mkv, webm, and MPEG-TS, when those containers land.
 
@@ -54,9 +57,13 @@ that [#5](https://github.com/autobutler-org/sprocket/issues/5) defines:
 | `rotation` | clockwise degrees, one of 0, 90, 180, and 270 |
 
 Codec names are lowercase short names: `h264`, `hevc`, `aac`, `opus`, `av1`, `vp9`.
-That is the scheme #5 adopts as part of the public contract.
+That is the scheme #5 adopts as part of the public contract, and anything off that
+list is named by its four-character sample entry code instead. ffprobe's `codec_name`
+agrees with the short names and disagrees everywhere else, calling ProRes `prores`
+where the container says `apco`, so the script reads `codec_tag_string` for anything
+that is not one of the short names.
 
-Two mappings from ffprobe's output are worth spelling out. `framerate` is
+Two more mappings from ffprobe's output are worth spelling out. `framerate` is
 `avg_frame_rate`, not `r_frame_rate`, so a variable-framerate file gets an honest
 number instead of a nominal one. `rotation` is the video stream's display matrix
 rotation negated: ffprobe reports a counter-clockwise angle in the range

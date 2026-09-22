@@ -54,6 +54,14 @@ FF=(ffmpeg -y -hide_banner -loglevel error)
 "${FF[@]}" "${VIDEO[@]}" "${AUDIO[@]}" "${ENCODE[@]}" "${EXACT[@]}" \
 	-movflags +frag_keyframe+empty_moov fragmented.mp4
 
+# ProRes video and PCM audio in mov: the pair that has no valid representation in
+# an MP4, which is what the remux compatibility table has to refuse. ProRes is an
+# intra codec and costs orders of magnitude more per frame than the rest of the
+# corpus, so this one is a quarter of a second at the proxy profile.
+"${FF[@]}" "${VIDEO[@]}" "${AUDIO[@]}" -t 0.25 \
+	-c:v prores_ks -profile:v 0 -pix_fmt yuv422p10le -c:a pcm_s16le "${EXACT[@]}" \
+	prores-pcm.mov
+
 # Rotation, as a tkhd matrix on the same content. -display_rotation is an input-only
 # option in ffmpeg 9 and takes a counter-clockwise angle, so the files are produced by
 # remuxing the baseline with the negated angle; the goldens report clockwise degrees.
@@ -67,7 +75,14 @@ done
 # helper: duration and bitrate come from the container, which knows the muxed size;
 # framerate is the average, not the nominal rate, so a variable-framerate file gets an
 # honest number; rotation is the display matrix negated into clockwise degrees.
+#
+# Codec names follow the scheme pkg/sprocket documents: one of the short names below,
+# or else the sample entry's own four-character code. ffprobe's codec_name agrees with
+# the short names and disagrees everywhere else, calling ProRes "prores" where the
+# container says "apco", so anything off the list is read from codec_tag_string.
 GOLDEN='
+	["h264", "hevc", "av1", "vp8", "vp9", "aac", "mp3", "opus"] as $short
+	| def codec($s): if ($short | index($s.codec_name)) then $s.codec_name else $s.codec_tag_string end;
 	(.streams[] | select(.codec_type == "video")) as $v
 	| ([.streams[] | select(.codec_type == "audio")] | first) as $a
 	| ([$v.side_data_list // [] | .[] | select(.rotation != null) | .rotation] | first // 0) as $ccw
@@ -75,8 +90,8 @@ GOLDEN='
 		duration: (.format.duration | tonumber),
 		width: $v.width,
 		height: $v.height,
-		video_codec: $v.codec_name,
-		audio_codec: ($a.codec_name // ""),
+		video_codec: codec($v),
+		audio_codec: (if $a then codec($a) else "" end),
 		bitrate: (.format.bit_rate | tonumber | floor),
 		framerate: ($v.avg_frame_rate | split("/") | (.[0] | tonumber) / (.[1] | tonumber)),
 		rotation: ((((-($ccw | round)) % 360) + 360) % 360),
