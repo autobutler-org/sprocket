@@ -56,6 +56,60 @@ The two upstream projects, as their repositories state them:
 The copyright lines in `gen2brain/h265`'s own `LICENSE` match these, except that
 it writes "Karpeles" where the upstream file writes "Karpelès".
 
+## github.com/rcarmo/go-264
+
+Version v0.0.0-20260918175710-241fd4164612, a pseudo-version: the repository has
+no release tags, so the module is pinned by commit and by hash in `go.sum`. A
+pure-Go H.264 decoder. sprocket imports `github.com/rcarmo/go-264/decode` to
+decode a single keyframe, and only under the `h264` build tag, so a build
+without that tag links none of it.
+
+Licensed MIT. Its `LICENSE` file, verbatim:
+
+```
+MIT License
+
+Copyright (c) 2026 Rui Carmo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Work it came from
+
+The module carries a `THIRD_PARTY_NOTICES.md`, and everything it attributes is
+in the audio packages, which sprocket does not import. It opens: "The entire
+go-264 project is distributed under the MIT License, copyright (c) 2026 Rui
+Carmo. Imported MIT material also retains the notices below." The notices below
+it are these:
+
+| Part of the module | Upstream | License | Copyright line |
+| --- | --- | --- | --- |
+| `audio/aac` | [OxideAV/oxideav-aac](https://github.com/OxideAV/oxideav-aac) at `7dcb2f4a9e6f7ccfa6b199342aeb95861dc57885` | MIT | `Copyright (c) 2026 Karpelès Lab Inc.` |
+| `audio/ac3` | [PasyDev/ac3psy](https://github.com/PasyDev/ac3psy) at `ebdd1d3d6cf80690d1c7e648231f7d603ca33f97` | MIT | `Copyright (c) 2026 PCPX` |
+
+A third section lists test recordings that are referenced rather than bundled:
+PolyAI's MINDS-14 under CC-BY-4.0 and a pyannote tutorial recording under its
+own MIT notice. Those are fixtures in the module's own tests, not code.
+
+The video decoder is presented as the author's own work, with no upstream
+attributed to it, and the module ships no patent notice of any kind.
+
 ## Patents
 
 `gen2brain/h265`'s README says, in its own words:
@@ -67,4 +121,5 @@ it writes "Karpeles" where the upstream file writes "Karpelès".
 
 That applies to sprocket too, and it is not specific to this dependency: no
 software license grants patent rights in HEVC or H.264, whoever wrote the
-decoder.
+decoder. `rcarmo/go-264` says nothing on the subject, so sprocket says it for
+both codecs in the [README](README.md).

@@ -2,13 +2,29 @@
 //
 // Keyframe is the only entry point. It takes what a container already knows
 // about a sample, dispatches on the codec short name, and returns the decoded
-// picture. HEVC is implemented; H.264 is next, as another case in the same
-// switch. A codec with no decoder returns ErrUnsupportedCodec, which is the
-// signal for a caller to fall back rather than to fail.
+// picture. HEVC and H.264 are implemented. A codec with no decoder returns
+// ErrUnsupportedCodec, which is the signal for a caller to fall back rather
+// than to fail.
 //
 // Nothing is kept between calls. Each call builds a decoder, uses it once, and
 // drops it, so the only memory a caller holds afterwards is the image it asked
 // for.
+//
+// # The h264 build tag
+//
+// H.264 is compiled in only under the h264 build tag, and without it an H.264
+// sample returns ErrUnsupportedCodec naming the tag. H.264 is patent
+// encumbered and the maintainer's decision is that a downstream opts into it
+// deliberately rather than acquiring it through go get. The build tag is the
+// whole of the difference: the decoder is a Go dependency like any other, and
+// the behavior under the tag is the same shape as the HEVC path.
+//
+// The H.264 decoder reads 8 bit 4:2:0 progressive sequences. A 10 bit, 4:2:2,
+// 4:4:4, monochrome, or interlaced sequence returns ErrUnsupportedCodec. One
+// known gap returns ErrCorruptSample instead: High profile with CAVLC entropy
+// coding and the 8x8 transform, which the decoder reports as invalid syntax
+// rather than as a tool it does not implement. Encoders pair High profile with
+// CABAC in practice, so this is rare footage.
 //
 // # Output
 //
@@ -45,9 +61,15 @@
 // 45 to 50 ms each and peak at 162 MiB, since the runtime keeps what it has
 // grown rather than returning it. There is no per-process warmup cost.
 //
+// The same size in H.264 High profile, from a 167 KB sample and with the h264
+// build tag: 95 to 101 ms and 55 MiB of peak resident memory, of which 12 MiB
+// is the image handed back. Six sequential decodes in one process stay at 93
+// to 101 ms each and peak at 80 MiB.
+//
 // A picture is refused before a plane is allocated for it if the sequence
 // declares more luma samples than maxLumaSamples, which is the largest picture
-// any HEVC level allows.
+// any HEVC level allows. Both codecs take that bound, the H.264 one counted in
+// macroblocks.
 package decode
 
 import (
@@ -107,6 +129,8 @@ func Keyframe(codec string, config []byte, nalLengthSize int, sample []byte) (im
 	switch codec {
 	case "hevc":
 		return hevcKeyframe(config, nalLengthSize, sample)
+	case "h264":
+		return h264Keyframe(config, nalLengthSize, sample)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnsupportedCodec, codec)
 	}
