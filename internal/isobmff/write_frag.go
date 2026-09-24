@@ -32,8 +32,7 @@ const fragmentBrand = "iso6"
 
 // FragTrack is one track of a fragmented output: what it carries and how to
 // describe it, with no samples in it. It is the shape both a Matroska source
-// and, later, an MPEG-TS one can fill in, since neither has a sample table to
-// hand over.
+// and an MPEG-TS one fill in, since neither has a sample table to hand over.
 type FragTrack struct {
 	// ID is the track_ID the output gives it, which every sample names. It must
 	// be nonzero and unique across the tracks of one file.
@@ -89,13 +88,19 @@ type FragSample struct {
 	// Offset and Size locate the sample's bytes in the reader passed to
 	// WriteFragmented.
 	Offset, Size int64
+	// Payload, when set, writes the sample's Size bytes instead, and Offset is
+	// not read. It is for a source whose samples are not one byte range: an
+	// MPEG-TS access unit is scattered across packets interleaved with other
+	// streams, and is Annex B where this family wants length-prefixed NAL
+	// units, so it is rebuilt on the way out rather than copied.
+	Payload func(io.Writer) error
 }
 
 // NextFragSample yields the samples of a fragmented output in decode order,
 // interleaved across tracks however the source stores them, and reports ok
 // false once the stream is spent. It is a function rather than an interface
-// because the two producers, a Matroska demuxer today and an MPEG-TS one later,
-// share nothing but this call.
+// because the two producers, the Matroska and the MPEG-TS demuxers, share
+// nothing but this call.
 type NextFragSample func() (FragSample, bool, error)
 
 // Sample flags as a trun stores them. ISO/IEC 14496-12 8.8.3.1: a sync sample
@@ -264,6 +269,12 @@ func (f *fragmentWriter) write(w io.Writer, r io.ReaderAt, tracks []FragTrack, s
 			if s.Track != id {
 				continue
 			}
+			if s.Payload != nil {
+				if err := writePayload(w, s); err != nil {
+					return err
+				}
+				continue
+			}
 			copied, err := io.CopyBuffer(w, io.NewSectionReader(r, s.Offset, s.Size), buf)
 			if err != nil {
 				return fmt.Errorf("copying %d bytes of payload at %d: %w", s.Size, s.Offset, err)
@@ -274,6 +285,35 @@ func (f *fragmentWriter) write(w io.Writer, r io.ReaderAt, tracks []FragTrack, s
 		}
 	}
 	return nil
+}
+
+// writePayload writes a sample through its own Payload and holds it to the
+// Size the trun already declared, since a payload that came out longer or
+// shorter would shift every sample after it.
+func writePayload(w io.Writer, s FragSample) error {
+	counted := &countingWriter{w: w}
+	if err := s.Payload(counted); err != nil {
+		return err
+	}
+	if counted.n != s.Size {
+		return fmt.Errorf("%w: track %d declared a %d byte sample and wrote %d", ErrMalformed, s.Track, s.Size, counted.n)
+	}
+	return nil
+}
+
+// countingWriter counts what passes through it.
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	if err != nil {
+		return n, fmt.Errorf("writing the output: %w", err)
+	}
+	return n, nil
 }
 
 // traf writes one track's fragment: the header, the base decode time, and the

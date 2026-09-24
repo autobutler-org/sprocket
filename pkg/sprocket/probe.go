@@ -7,6 +7,7 @@ import (
 
 	"github.com/autobutler-org/sprocket/internal/isobmff"
 	"github.com/autobutler-org/sprocket/internal/matroska"
+	"github.com/autobutler-org/sprocket/internal/mpegts"
 )
 
 // Sentinel errors. Every error this package returns wraps one of these, so a
@@ -58,7 +59,9 @@ type Info struct {
 
 // Probe reports what a file holds: duration, dimensions, codecs, bitrate, frame
 // rate, and rotation. It reads box headers and the movie header only, never the
-// media payload, so probing a multi-gigabyte file costs a few reads.
+// media payload, so probing a multi-gigabyte file costs a few reads. An MPEG-TS
+// file has no header to read and is scanned instead, 4 MiB from the front and
+// 4 MiB from the end at most; see the package documentation under "MPEG-TS".
 //
 // size is the length of the file r reads from; Probe trusts it and never reads
 // past it. A file with no audio track, or with no video track, is not an error:
@@ -79,10 +82,13 @@ func Probe(r io.ReaderAt, size int64) (Info, error) {
 	}
 
 	var info Info
-	if file.mp4 != nil {
+	switch {
+	case file.mp4 != nil:
 		info = probeISOBMFF(file.mp4)
-	} else {
+	case file.mkv != nil:
 		info = probeMatroska(file.mkv)
+	default:
+		info = probeTS(file.ts)
 	}
 	if seconds := info.Duration.Seconds(); seconds > 0 {
 		info.Bitrate = int(float64(size) * 8 / seconds)
@@ -117,6 +123,20 @@ func probeMatroska(file *matroska.File) Info {
 		info.FrameRate = file.FrameRate()
 	}
 	if audio := file.AudioTrack(); audio != nil {
+		info.AudioCodec = audio.Codec
+	}
+	return info
+}
+
+// probeTS is the same answer from a transport stream, whose every number is
+// measured by the scan the package documentation describes under "MPEG-TS".
+// Rotation is zero: the format has no display matrix.
+func probeTS(file *mpegts.File) Info {
+	info := Info{Duration: file.Duration(), FrameRate: file.FrameRate()}
+	if video := file.Video; video != nil {
+		info.Width, info.Height, info.VideoCodec = video.Width, video.Height, video.Codec
+	}
+	if audio := file.Audio; audio != nil {
 		info.AudioCodec = audio.Codec
 	}
 	return info

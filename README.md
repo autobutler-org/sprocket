@@ -12,8 +12,15 @@ says how many frames a track holds or how large each one is, and a `moov` cannot
 be placed in front of the payload from a single pass. One `moof` and one `mdat`
 per source cluster needs no index and costs a cluster's block headers. See
 `Fragmented output` in the package documentation for what that means for the
-decode times and the edit list the writer has to derive. MPEG-TS is not supported
-at all. Work is tracked in
+decode times and the edit list the writer has to derive.
+
+MPEG-TS (`.ts`, and the 192-byte-packet `.m2ts`) probes, thumbnails, and remuxes in
+both directions: a TS goes into an mp4, an m4v, or a 3gp, fragmented for the same
+reason as Matroska, and an MP4-family file goes into a TS. A transport stream has no
+header and no index, so `Probe` scans it, at most 4 MiB from the front and 4 MiB from
+the end, and a thumbnail seeks by estimate and reads forward to the keyframe. Trimming
+a TS source is not supported yet; trimming an mp4 into a TS is. See `MPEG-TS` in the
+package documentation. Work is tracked in
 [the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
 
 Keyframe decoding covers HEVC, VP8, and AV1, and H.264 behind the `h264` build
@@ -45,7 +52,8 @@ fmt.Println(info.Duration, info.Width, info.Height, info.VideoCodec, info.Rotati
 ```
 
 `Probe` reads box headers and the movie header only, never the media payload, so a
-4 GiB file costs a few kilobytes of reads. Codec names are a documented, stable
+4 GiB file costs a few kilobytes of reads; a transport stream, which has no header,
+costs at most 8 MiB. Codec names are a documented, stable
 scheme, and so are the bitrate and frame rate rules; see the package documentation.
 Input that is not a container this library reads returns `ErrUnsupportedContainer`
 with no partial result, and headers that are malformed or cut short return
@@ -137,7 +145,7 @@ These are container operations. A container is bookkeeping: boxes, sample tables
 timestamps, offsets. The bulk of ffmpeg is codecs, and this library re-encodes
 nothing, so it needs no encoder and needs a decoder for one purpose only.
 
-Planned container support, in priority order: the ISOBMFF family (mp4, mov, m4v, 3gp,
+Container support, in the order it was built: the ISOBMFF family (mp4, mov, m4v, 3gp,
 3g2), then Matroska and WebM, then MPEG-TS. Keyframe decoding covers HEVC, VP8, AV1
 and, behind the `h264` build tag, H.264. VP9 has no known pure-Go path and returns the
 unsupported-codec error.

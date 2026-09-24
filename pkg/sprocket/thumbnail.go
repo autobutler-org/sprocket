@@ -79,9 +79,16 @@ type keyframe struct {
 }
 
 // nearestKeyframe reads the keyframe nearest a time out of whichever family
-// the file belongs to, and reports the rotation to apply to it. Matroska
-// carries no display matrix, so a Matroska source is never rotated.
+// the file belongs to, and reports the rotation to apply to it. Neither
+// Matroska nor MPEG-TS carries a display matrix, so neither is ever rotated.
 func nearestKeyframe(file container, at time.Duration) (keyframe, int, error) {
+	if file.ts != nil {
+		sample, err := file.ts.ReadNearestSyncSample(at)
+		return keyframe{
+			codec: sample.Codec, config: sample.Config,
+			nalLengthSize: sample.NALLengthSize, data: sample.Data, at: sample.Time,
+		}, 0, err
+	}
 	if file.mkv != nil {
 		sample, err := file.mkv.ReadNearestSyncSample(at)
 		return keyframe{

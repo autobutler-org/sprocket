@@ -117,6 +117,27 @@ done
 	-c:v libsvtav1 -preset 12 -crf 50 -c:a libopus -b:a 32k "${EXACT[@]}" \
 	av1-opus.webm
 
+# MPEG-TS. Each file is copied out of an ISOBMFF one rather than encoded again, so
+# it carries the same bitstreams, and a thumbnail or a remux of it can be compared
+# with its twin byte for byte. The bitstream filters turn the length-prefixed NAL
+# units the MP4 family stores into the Annex B start codes a transport stream
+# carries, and put the parameter sets in front of each keyframe.
+"${FF[@]}" -i h264-aac.mp4 -c copy -bsf:v h264_mp4toannexb "${EXACT[@]}" \
+	-f mpegts h264-aac.ts
+
+"${FF[@]}" -i h264-gop12.mp4 -c copy -bsf:v h264_mp4toannexb "${EXACT[@]}" \
+	-f mpegts h264-gop12.ts
+
+"${FF[@]}" -i hevc-aac-8bit.mov -c copy -bsf:v hevc_mp4toannexb "${EXACT[@]}" \
+	-f mpegts hevc-aac.ts
+
+# M2TS, the Blu-ray variant: every packet carries a four byte timestamp in front,
+# which makes it 192 bytes rather than 188. ffmpeg's M2TS mode also writes the AAC
+# stream as a private stream with no descriptor, which the reader has to name from
+# its first frame.
+"${FF[@]}" -i h264-aac.mp4 -c copy -bsf:v h264_mp4toannexb "${EXACT[@]}" \
+	-f mpegts -mpegts_m2ts_mode 1 h264-aac.m2ts
+
 # Goldens. The mapping is the judgment, so it is spelled out rather than hidden in a
 # helper: duration and bitrate come from the container, which knows the muxed size;
 # framerate is the average, not the nominal rate, so a variable-framerate file gets an
@@ -148,7 +169,7 @@ GOLDEN='
 # The golden is named after the whole media file, extension included, because two
 # containers carry the same content under the same stem: h264-aac.mp4 and
 # h264-aac.mkv.
-media=(*.mp4 *.mov *.mkv *.webm)
+media=(*.mp4 *.mov *.mkv *.webm *.ts *.m2ts)
 for file in "${media[@]}"; do
 	ffprobe -v error -print_format json -show_format -show_streams "$file" |
 		jq "$GOLDEN" >"$file.json"

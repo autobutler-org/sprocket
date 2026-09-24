@@ -1,6 +1,7 @@
 package sprocket
 
 import (
+	"fmt"
 	"io"
 	"time"
 )
@@ -38,7 +39,9 @@ import (
 // which the package documentation describes under "Trim"; writing one into the
 // MP4 family produces a fragmented file, as a remux does. A container whose
 // headers are malformed or cut short returns ErrCorrupt, and so does a file
-// whose video track declares no keyframe at all. An error from w is returned as
+// whose video track declares no keyframe at all. An MPEG-TS source returns
+// ErrUnsupportedContainer: see the package documentation under "MPEG-TS". An
+// MP4-family source cut into a TS output is fine. An error from w is returned as
 // it came, so errors.Is finds the caller's own.
 func Trim(r io.ReaderAt, size int64, w io.Writer, target Container, start, end time.Duration) (time.Duration, error) {
 	file, err := open(r, size)
@@ -50,13 +53,16 @@ func Trim(r io.ReaderAt, size int64, w io.Writer, target Container, start, end t
 		c      cut
 		actual time.Duration
 	)
-	if file.mkv != nil {
+	switch {
+	case file.ts != nil:
+		return 0, fmt.Errorf("%w: an MPEG-TS source is not trimmed", ErrUnsupportedContainer)
+	case file.mkv != nil:
 		span, at, err := file.mkv.TrimSpan(start, end)
 		if err != nil {
 			return 0, writeError(err)
 		}
 		c.span, actual = &span, at
-	} else {
+	default:
 		ranges, at, err := file.mp4.TrimRanges(start, end)
 		if err != nil {
 			return 0, writeError(err)

@@ -10,9 +10,9 @@ import (
 // Target names a container this library can write. The three ISOBMFF ones
 // differ by the brands in their ftyp and by what CodecTargets lets into them,
 // not by structure, so Write covers all three and so does WriteFragmented. The
-// two Matroska ones are written elsewhere and are named here because
-// CodecTargets is one table for every container, and splitting it would be two
-// places for the same answer to drift apart in.
+// two Matroska ones and MPEG-TS are written elsewhere and are named here
+// because CodecTargets is one table for every container, and splitting it would
+// be two places for the same answer to drift apart in.
 type Target string
 
 // The containers this library produces. Write produces the first three.
@@ -22,13 +22,14 @@ const (
 	Target3GP  Target = "3gp"
 	TargetMKV  Target = "mkv"
 	TargetWebM Target = "webm"
+	TargetTS   Target = "ts"
 )
 
 // targets is every container the compatibility table speaks for. A Target that
 // is not on it fits nothing.
 var targets = map[Target]bool{
 	TargetMP4: true, TargetM4V: true, Target3GP: true,
-	TargetMKV: true, TargetWebM: true,
+	TargetMKV: true, TargetWebM: true, TargetTS: true,
 }
 
 // brandSet is one target's ftyp: the major brand that says what the file is,
@@ -76,19 +77,23 @@ var targetBrands = map[Target]brandSet{
 // is what this library can name a CodecID for. WebM is the strict one: the
 // format allows VP8, VP9, and AV1 video with Vorbis or Opus audio, and nothing
 // else, which is why it has its own column rather than sharing Matroska's.
+//
+// MPEG-TS is the narrow one on the other side: a transport stream names its
+// codecs by stream type, and the registered types this library can write are
+// H.264, HEVC, AAC in ADTS, MPEG audio, and the two Dolby formats.
 var CodecTargets = map[string][]Target{
-	"h264":   {TargetMP4, TargetM4V, Target3GP, TargetMKV},
-	"hevc":   {TargetMP4, TargetM4V, Target3GP, TargetMKV},
+	"h264":   {TargetMP4, TargetM4V, Target3GP, TargetMKV, TargetTS},
+	"hevc":   {TargetMP4, TargetM4V, Target3GP, TargetMKV, TargetTS},
 	"av1":    {TargetMP4, TargetMKV, TargetWebM},
 	"vp8":    {TargetMKV, TargetWebM},
 	"vp9":    {TargetMP4, TargetMKV, TargetWebM},
-	"aac":    {TargetMP4, TargetM4V, Target3GP, TargetMKV},
-	"mp3":    {TargetMP4, TargetM4V, TargetMKV},
+	"aac":    {TargetMP4, TargetM4V, Target3GP, TargetMKV, TargetTS},
+	"mp3":    {TargetMP4, TargetM4V, TargetMKV, TargetTS},
 	"opus":   {TargetMP4, TargetMKV, TargetWebM},
 	"vorbis": {TargetMKV, TargetWebM},
 	"alac":   {TargetMP4, TargetM4V, TargetMKV},
-	"ac-3":   {TargetMP4, TargetM4V, TargetMKV},
-	"ec-3":   {TargetMP4, TargetM4V, TargetMKV},
+	"ac-3":   {TargetMP4, TargetM4V, TargetMKV, TargetTS},
+	"ec-3":   {TargetMP4, TargetM4V, TargetMKV, TargetTS},
 	"fLaC":   {TargetMP4, TargetMKV},
 	"samr":   {Target3GP},
 	"sawb":   {Target3GP},
