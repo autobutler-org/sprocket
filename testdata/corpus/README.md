@@ -5,12 +5,13 @@ every public function has something to test against.
 
 Every file is two seconds of the same synthetic content: a 128x72 `testsrc2` pattern
 at 24 fps and a 440 Hz `sine` tone. 128x72 is not square on purpose, so a rotated
-file is distinguishable from its stored dimensions. Three files are exceptions:
+file is distinguishable from its stored dimensions. Four files are exceptions:
 `prores-pcm.mov` is a quarter of a second, because ProRes is an intra codec and costs
-orders of magnitude more per frame than the rest, and `h264-gop12.mp4` and
-`h264-gop12.mkv` are three seconds, because a trim needs room for more than one
-keyframe. The seventeen media files total 387,632 bytes; the directory including the
-goldens and the script is 496 KB on disk.
+orders of magnitude more per frame than the rest, and `h264-gop12.mp4`,
+`h264-gop12.mkv`, and `h264-gop12.ts` are three seconds, because a trim needs room
+for more than one keyframe. The twenty-one media files total 527,204 bytes, of which
+the four MPEG-TS files are 139,572; the directory including the goldens and the
+script is 660 KB on disk.
 
 ## Files
 
@@ -33,8 +34,10 @@ goldens and the script is 496 KB on disk.
 | `vp8-vorbis.webm` | VP8 + Vorbis in WebM |
 | `vp9-opus.webm` | VP9 + Opus in WebM: the video codec with no decoder here, which has to probe correctly and return the typed unsupported-codec error from the thumbnail path |
 | `av1-opus.webm` | AV1 + Opus in WebM |
-
-A later wave adds MPEG-TS, when that container lands.
+| `h264-aac.ts` | H.264 + AAC in MPEG-TS, copied out of `h264-aac.mp4` with `-c copy`, so the bitstreams are the mp4's and a thumbnail or a remux compares byte for byte |
+| `h264-gop12.ts` | the MPEG-TS twin of `h264-gop12.mp4`, copied the same way: the keyframe search has six keyframes to land on |
+| `hevc-aac.ts` | HEVC + AAC in MPEG-TS, copied out of `hevc-aac-8bit.mov`: the one TS file a build without the `h264` tag can decode a frame out of |
+| `h264-aac.m2ts` | `h264-aac.mp4` copied into M2TS, the Blu-ray variant whose packets carry a four byte timestamp in front and so run 192 bytes; ffmpeg's M2TS mode also declares the AAC stream as private data with no descriptor, which the reader names from its first frame |
 
 ## Generating
 
@@ -91,6 +94,14 @@ seconds, because Matroska stores the duration the muxer measured rather than the
 movie duration an mvhd declares, and that measurement runs to the end of the last
 audio frame. Matroska carries no display matrix, so every one of them reports a
 rotation of 0.
+
+The MPEG-TS files report 2.021333 seconds, or 3.021333 for the three second one,
+because a transport stream has no movie duration: ffprobe measures from the earliest
+timestamp, which is the audio's first frame, to the end of the last video frame. The
+audio starts one AAC frame, 1024 samples, ahead of the video, which is the encoder
+priming the mp4's edit list trims and a transport stream has no way to trim. The
+bitrate follows from that duration. They report a rotation of 0, since a transport
+stream has no display matrix.
 
 `fragmented.mp4` reports a duration of 2.083333 rather than 2.0. The fragmented
 layout carries no edit list, so the trailing AAC frame is not trimmed away. That is a

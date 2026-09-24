@@ -446,3 +446,62 @@ func TestWriteFragmentedSampleEntries(t *testing.T) {
 		})
 	}
 }
+
+// TestWriteFragmentedTakesAPayloadWriter holds the one change an MPEG-TS source
+// needed: a sample whose bytes are written by a function rather than copied
+// out of a range. The reader holds nothing at all, so every byte of the output
+// payload came through the functions.
+func TestWriteFragmentedTakesAPayloadWriter(t *testing.T) {
+	_, tracks, _ := twoTrackStream()
+	bodies := [][]byte{[]byte("keyframe"), []byte("aac!"), []byte("delta")}
+	samples := []FragSample{
+		{Track: 1, Duration: 40, Sync: true, Fragment: true},
+		{Track: 2, Duration: 20, Sync: true},
+		{Track: 1, Decode: 40, Duration: 40},
+	}
+	for i := range samples {
+		body := bodies[i]
+		samples[i].Size = int64(len(body))
+		samples[i].Offset = 1 << 40 // never read
+		samples[i].Payload = func(w io.Writer) error {
+			_, err := w.Write(body)
+			return err
+		}
+	}
+
+	var out bytes.Buffer
+	if err := WriteFragmented(&out, bytes.NewReader(nil), TargetMP4, 80*time.Millisecond, tracks, fragStream(samples)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	file, err := Parse(bytes.NewReader(out.Bytes()), int64(out.Len()))
+	if err != nil {
+		t.Fatalf("parse the output: %v", err)
+	}
+	sample, err := file.ReadSyncSample(0)
+	if err != nil {
+		t.Fatalf("read the keyframe: %v", err)
+	}
+	if !bytes.Equal(sample.Data, bodies[0]) {
+		t.Errorf("keyframe = %q, want %q", sample.Data, bodies[0])
+	}
+	// Video goes before audio within a fragment, so the audio frame follows
+	// both video samples in the mdat.
+	if !bytes.HasSuffix(out.Bytes(), []byte("keyframedeltaaac!")) {
+		t.Errorf("the payload does not end with the three bodies in track order")
+	}
+}
+
+func TestWriteFragmentedRefusesAPayloadOfTheWrongSize(t *testing.T) {
+	_, tracks, _ := twoTrackStream()
+	samples := []FragSample{{
+		Track: 1, Duration: 40, Sync: true, Size: 4,
+		Payload: func(w io.Writer) error {
+			_, err := w.Write([]byte("too long"))
+			return err
+		},
+	}}
+	err := WriteFragmented(io.Discard, bytes.NewReader(nil), TargetMP4, time.Second, tracks[:1], fragStream(samples))
+	if !errors.Is(err, ErrMalformed) {
+		t.Errorf("error = %v, want ErrMalformed", err)
+	}
+}

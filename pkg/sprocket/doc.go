@@ -27,7 +27,10 @@
 // So are Matroska and WebM, in both directions. An MP4-family file goes into an
 // mkv or a webm, and a Matroska or WebM file goes into an mp4, an m4v, or a 3gp,
 // where the output is fragmented for the reason "Fragmented output" gives.
-// MPEG-TS is not supported at all.
+//
+// MPEG-TS probes, thumbnails, and remuxes in both directions. Trimming a TS
+// source is not supported; trimming an MP4-family file into a TS is. "MPEG-TS"
+// has the details.
 //
 // Keyframe decoding covers HEVC, VP8, and AV1, and H.264 behind the h264 build
 // tag. VP9 has no pure-Go decoder and returns ErrUnsupportedCodec. See
@@ -67,6 +70,84 @@
 // which costs holding one cluster's block descriptors, a few thousand at most
 // and no payload, while it is measured. Clusters run about a second and begin
 // on a keyframe where there is one to begin on.
+//
+// # MPEG-TS
+//
+// A transport stream is a run of 188 byte packets, or 192 byte ones in the M2TS
+// variant Blu-ray uses, and it has no header and no index: the tables that name
+// its streams repeat through the file, and every timestamp is at the front of a
+// PES packet scattered across the packets of its stream. Everything Probe
+// reports about one is learned by reading, so the reading is capped.
+//
+// Probe reads at most 4 MiB from the front of the file and at most 4 MiB from
+// the end, and nothing in between, whatever the file's length. The front scan
+// finds the program association table and the program map table, names each
+// stream from its stream type, reads the video's sequence parameter set for the
+// dimensions and an AAC stream's first ADTS header for its configuration, and
+// keeps going until it has seen two seconds of video to measure the frame rate
+// over. The tail scan reads the timestamps near the end. Only the first video
+// and the first audio stream of the first program are read.
+//
+// When the front cap is reached first: a file with no program association table
+// in it returns ErrUnsupportedContainer, since sync bytes with no tables are not
+// a stream anything can be named in; one with the tables and no video PES, or
+// no parameter sets for an H.264 or HEVC stream, returns ErrCorrupt; an audio
+// stream with no PES in the scan is left out, as if the file had no audio.
+//
+// Times are measured from the earliest presentation timestamp in the front
+// scan, which is the start time ffprobe reports; a stream remuxed from an mp4
+// starts with its audio's priming, so its video begins a frame or so after
+// zero. Duration runs from there to the end of the last video frame the tail
+// scan finds, which is also how ffprobe measures one. The 33 bit clock's
+// rollover is unwrapped, and a file shorter than 13 hours is always read right.
+// A discontinuity between the front and the tail, a splice or a clock reset, is
+// not detected and makes the duration wrong: it is the naive difference,
+// clamped at zero, and the bitrate derived from it is wrong with it. The frame
+// rate is the video PES count over the span of their decode timestamps in the
+// front scan, which is exact for constant frame rate video and an average over
+// the first two seconds for anything else. Rotation is always 0: the format has
+// no display matrix.
+//
+// A thumbnail has no index to look the keyframe up in, so the search is an
+// estimate refined by reading. The requested time becomes a byte offset in
+// proportion to the duration, and the file is scanned forward from there for
+// the start of each video PES, looking at the first slice of each to see
+// whether it is an IDR picture, an HEVC IRAP picture, or flagged as a random
+// access point. A scan that starts past the keyframe it wants steps back a
+// megabyte and scans again, doubling the step up to eight times. A file of
+// steady bitrate lands within a GOP of the estimate and costs a GOP's reading;
+// the worst case is bounded at eight scans of at most 64 MiB. Only the winning
+// keyframe's bytes are gathered, under a 32 MiB cap.
+//
+// Remuxing a TS into the MP4 family writes a fragmented file, for the reason
+// "Fragmented output" gives, with a fragment per GOP. The samples are rebuilt
+// on the way: the access unit is Annex B in the stream and length-prefixed in
+// the output, and it is scattered across packets, so each one is walked once
+// to measure it and twice more to write it, and never held. The access unit
+// delimiter and any in-band copy of a parameter set the configuration record
+// holds are dropped, which gives an H.264 file copied into a TS out of an mp4
+// back the mp4's own samples byte for byte; an HEVC one keeps the SEI its
+// encoder put in the hvcC, which the stream carries in-band. AAC loses its
+// ADTS headers and gets an AudioSpecificConfig built from the first one; MP3
+// and the Dolby formats have no sample entry in the fragmented writer yet and
+// return ErrUnsupportedContainer, as they do from a Matroska source.
+//
+// Remuxing an MP4-family file into a TS writes one program with every video
+// and audio track in it, interleaved by decode time. Video samples are
+// rewritten to Annex B with an access unit delimiter in front and the
+// configuration record's parameter sets in front of each keyframe; AAC gets an
+// ADTS header built from its AudioSpecificConfig, which limits it to the object
+// types ADTS can name. The tables repeat in front of the next keyframe once 0.4
+// seconds have passed, and the clock reference rides on the video's PES
+// packets. A TS into a TS is the file copied as it stands.
+//
+// Two pairings are not written: a Matroska source into a TS, and a TS into
+// Matroska. Neither has an index, and nothing is built yet to carry one
+// straight into the other; both return ErrUnsupportedContainer.
+//
+// Trim does not take a TS source and returns ErrUnsupportedContainer. The
+// keyframe search above and the remux walk would make one, and it is left for
+// when it is asked for.
 //
 // # Thumbnails
 //
@@ -192,8 +273,10 @@
 // # Remux
 //
 // Remux moves the streams of a file into another container: mp4, m4v, 3gp,
-// mkv, or webm, from a source of either family. Nothing is decoded and nothing
-// is re-encoded. The sample payload is copied verbatim as byte ranges, and the
+// mkv, webm, or ts, from a source of any family, with the two exceptions
+// "MPEG-TS" names. Nothing is decoded and nothing is re-encoded. The sample
+// payload is copied verbatim as byte ranges, except where "MPEG-TS" says it is
+// rebuilt, and the
 // codec configuration is carried across, so the output probes and thumbnails
 // to what the input did. Only video and audio tracks come across; a timecode or
 // subtitle track is dropped.
@@ -239,7 +322,10 @@
 //
 // # Fragmented output
 //
-// An MP4 written from a Matroska or WebM source is a fragmented one: an ftyp,
+// An MP4 written from a Matroska, WebM, or MPEG-TS source is a fragmented one,
+// and what follows is written about Matroska; "MPEG-TS" says what differs for
+// a transport stream, which is where its samples come from rather than how
+// they are laid out. The file is an ftyp,
 // then a moov whose sample tables are empty and whose mvex declares the tracks,
 // then a moof and an mdat for each of the source's clusters. The ftyp carries
 // the iso6 brand alongside the target's own, which is what says the file may
@@ -299,21 +385,26 @@
 // caller is given ahead of time and the answer a remux acts on cannot drift.
 //
 //	codec   containers it may be written into
-//	h264    mp4, m4v, 3gp, mkv
-//	hevc    mp4, m4v, 3gp, mkv
+//	h264    mp4, m4v, 3gp, mkv, ts
+//	hevc    mp4, m4v, 3gp, mkv, ts
 //	av1     mp4, mkv, webm
 //	vp8     mkv, webm
 //	vp9     mp4, mkv, webm
-//	aac     mp4, m4v, 3gp, mkv
-//	mp3     mp4, m4v, mkv
+//	aac     mp4, m4v, 3gp, mkv, ts
+//	mp3     mp4, m4v, mkv, ts
 //	opus    mp4, mkv, webm
 //	vorbis  mkv, webm
 //	alac    mp4, m4v, mkv
-//	ac-3    mp4, m4v, mkv
-//	ec-3    mp4, m4v, mkv
+//	ac-3    mp4, m4v, mkv, ts
+//	ec-3    mp4, m4v, mkv, ts
 //	fLaC    mp4, mkv
 //	samr    3gp
 //	sawb    3gp
+//
+// A transport stream is the narrow target: it names its codecs by stream type,
+// and the ones this library writes are H.264, HEVC, AAC in ADTS, MPEG audio,
+// and the two Dolby formats. AV1, VP9, and Opus have stream type registrations
+// of their own that few players read, and are refused.
 //
 // alac, ac-3, and ec-3 are on the list because all three are registered for
 // the MP4 family: alac through Apple's own registration, and the two Dolby
@@ -352,8 +443,11 @@
 // the file stores it, case included: "ac-3", "ec-3", "fLaC", "alac". A Matroska
 // file with a codec off the list reports its CodecID string instead, such as
 // "V_QUICKTIME". Those are readable enough to log or to match on, but they are
-// not yet promised to stay as they are; the nine names above are. The list grows as containers and
-// codecs are added, and a name on it never changes meaning.
+// not yet promised to stay as they are; the nine names above are. A transport
+// stream has no four-character codes, and names what it cannot carry anywhere
+// by ffmpeg's names for them: mpeg1video, mpeg2video, mpeg4, mp1, mp2, and
+// aac_latm. The list grows as containers and codecs are added, and a name on
+// it never changes meaning.
 //
 // # Bitrate
 //
@@ -377,5 +471,6 @@
 //
 // A Matroska or WebM file has no sample table, so the rule there is the one
 // "Matroska and WebM" describes: the declared DefaultDuration where the track
-// states one, and a measured count of blocks where it does not.
+// states one, and a measured count of blocks where it does not. An MPEG-TS
+// file is measured over the front of the file, as "MPEG-TS" describes.
 package sprocket

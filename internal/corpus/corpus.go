@@ -37,6 +37,7 @@ var notMedia = []string{".json", ".md", ".sh"}
 var (
 	isobmffExtensions  = []string{".mp4", ".mov"}
 	matroskaExtensions = []string{".mkv", ".webm"}
+	tsExtensions       = []string{".ts", ".m2ts"}
 )
 
 // Dir returns the corpus directory. It is resolved from this file's own path, so
@@ -69,6 +70,9 @@ func ISOBMFFFiles() ([]string, error) { return filesWithExtension(isobmffExtensi
 // MatroskaFiles returns the names of the Matroska family files in the corpus,
 // sorted.
 func MatroskaFiles() ([]string, error) { return filesWithExtension(matroskaExtensions) }
+
+// TSFiles returns the names of the MPEG-TS files in the corpus, sorted.
+func TSFiles() ([]string, error) { return filesWithExtension(tsExtensions) }
 
 func filesWithExtension(extensions []string) ([]string, error) {
 	names, err := Files()

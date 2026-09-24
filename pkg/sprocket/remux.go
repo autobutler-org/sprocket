@@ -7,6 +7,7 @@ import (
 
 	"github.com/autobutler-org/sprocket/internal/isobmff"
 	"github.com/autobutler-org/sprocket/internal/matroska"
+	"github.com/autobutler-org/sprocket/internal/mpegts"
 )
 
 // ErrIncompatible means the file's codecs have no valid representation in the
@@ -29,6 +30,7 @@ const (
 	ThreeGP Container = "3gp"
 	MKV     Container = "mkv"
 	WebM    Container = "webm"
+	TS      Container = "ts"
 )
 
 // CanRemux reports whether a probed file can be moved into target without
@@ -55,9 +57,11 @@ func CanRemux(info Info, target Container) bool {
 // moves as byte ranges through one buffer, so a multi-gigabyte source costs
 // the same heap as a small one.
 //
-// An MP4-family output written from a Matroska or WebM source is fragmented,
-// which is the only way to keep the header in front of a source that has no
-// index. See the package documentation under "Fragmented output".
+// An MP4-family output written from a Matroska, WebM, or MPEG-TS source is
+// fragmented, which is the only way to keep the header in front of a source
+// that has no index. See the package documentation under "Fragmented output".
+// A TS output has no header at all; see the package documentation under
+// "MPEG-TS" for what goes into one.
 //
 // Video and audio tracks are carried over, with their sample descriptions,
 // edit lists, and display matrices copied verbatim, so the output probes and
@@ -69,9 +73,10 @@ func CanRemux(info Info, target Container) bool {
 // this library cannot write from: a fragmented file, whose samples are
 // described by its fragments rather than by the movie header, a Matroska file
 // with laced blocks written into the MP4 family, where a sample is one frame,
-// and a file with neither a video nor an audio track. A container whose
-// headers are malformed or cut short returns ErrCorrupt. An error from w is
-// returned as it came, so errors.Is finds the caller's own.
+// and a file with neither a video nor an audio track. So does a pairing no
+// writer covers: a Matroska source into TS, or a TS source into Matroska. A
+// container whose headers are malformed or cut short returns ErrCorrupt. An
+// error from w is returned as it came, so errors.Is finds the caller's own.
 func Remux(r io.ReaderAt, size int64, w io.Writer, target Container) error {
 	file, err := open(r, size)
 	if err != nil {
@@ -84,16 +89,27 @@ func Remux(r io.ReaderAt, size int64, w io.Writer, target Container) error {
 // the caller passed a cut. It is the one place that pairs a source family with
 // a writer, so Remux and Trim cannot disagree about which pairs exist.
 //
-// Three of the four pairings copy samples into a header-first output. The
-// fourth, a Matroska source into the MP4 family, writes a fragmented file:
-// the source states its frames cluster by cluster and nothing before the media
-// says how many there are, so there is no index to put in front of them. See
-// the package documentation under "Fragmented output".
+// A source with an index, the MP4 family, is copied into a header-first output
+// of any family. A source without one, Matroska or MPEG-TS, goes into the MP4
+// family as a fragmented file: nothing before the media says how many frames
+// there are, so there is no index to put in front of them. See the package
+// documentation under "Fragmented output". A TS source into a TS output is the
+// file itself, and the two cross-family pairings with no index on either side
+// are not written.
 func writeInto(w io.Writer, file container, target Container, c cut) error {
 	out := isobmff.Target(target)
 	matroskaTarget := out == isobmff.TargetMKV || out == isobmff.TargetWebM
+	tsTarget := out == isobmff.TargetTS
 
 	switch {
+	case file.ts != nil && tsTarget:
+		return copyWhole(w, file.ts)
+	case file.ts != nil && matroskaTarget, file.mkv != nil && tsTarget:
+		return fmt.Errorf("%w: no writer takes %s into %s", ErrUnsupportedContainer, sourceFamily(file), target)
+	case file.ts != nil:
+		return writeError(mpegts.WriteFragmented(w, file.ts, out))
+	case tsTarget:
+		return writeError(mpegts.Write(w, file.mp4, c.ranges))
 	case file.mkv != nil && matroskaTarget:
 		return writeError(matroska.Copy(w, file.mkv, out, c.span))
 	case file.mkv != nil:
@@ -103,6 +119,27 @@ func writeInto(w io.Writer, file container, target Container, c cut) error {
 	default:
 		return writeError(isobmff.Write(w, file.mp4, out, c.ranges))
 	}
+}
+
+// copyWhole writes a transport stream out as it stands, which is the whole of a
+// remux from TS into TS.
+func copyWhole(w io.Writer, file *mpegts.File) error {
+	r, size := file.Source()
+	if _, err := io.Copy(w, io.NewSectionReader(r, 0, size)); err != nil {
+		return fmt.Errorf("copying the stream: %w", err)
+	}
+	return nil
+}
+
+// sourceFamily names the family a parsed source belongs to, for an error.
+func sourceFamily(file container) string {
+	switch {
+	case file.mkv != nil:
+		return "Matroska"
+	case file.ts != nil:
+		return "MPEG-TS"
+	}
+	return "ISOBMFF"
 }
 
 // writeError maps a muxer error onto this package's sentinels, for Remux and
@@ -118,7 +155,8 @@ func writeError(err error) error {
 	case errors.Is(err, isobmff.ErrTruncated), errors.Is(err, isobmff.ErrMalformed),
 		errors.Is(err, isobmff.ErrNoSyncSample), errors.Is(err, matroska.ErrTruncated),
 		errors.Is(err, matroska.ErrMalformed), errors.Is(err, matroska.ErrNoSyncSample),
-		errors.Is(err, matroska.ErrElementTooLarge), errors.Is(err, isobmff.ErrBoxTooLarge):
+		errors.Is(err, matroska.ErrElementTooLarge), errors.Is(err, isobmff.ErrBoxTooLarge),
+		errors.Is(err, mpegts.ErrTruncated), errors.Is(err, mpegts.ErrMalformed):
 		return fmt.Errorf("%w: %w", ErrCorrupt, err)
 	default:
 		return err

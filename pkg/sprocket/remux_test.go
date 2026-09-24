@@ -182,6 +182,13 @@ func TestCanRemux(t *testing.T) {
 		{video: "h264", audio: "opus", target: sprocket.WebM, want: false},
 		{video: "vp9", audio: "aac", target: sprocket.WebM, want: false},
 		{video: "vp8", audio: "vorbis", target: sprocket.MP4, want: false},
+		// A transport stream carries the codecs it has a stream type for.
+		{video: "h264", audio: "aac", target: sprocket.TS, want: true},
+		{video: "hevc", audio: "ac-3", target: sprocket.TS, want: true},
+		{video: "h264", audio: "mp3", target: sprocket.TS, want: true},
+		{video: "av1", audio: "aac", target: sprocket.TS, want: false},
+		{video: "h264", audio: "opus", target: sprocket.TS, want: false},
+		{video: "mpeg2video", audio: "mp2", target: sprocket.MP4, want: false},
 	} {
 		t.Run(tc.video+"+"+tc.audio+"/"+string(tc.target), func(t *testing.T) {
 			info := sprocket.Info{VideoCodec: tc.video, AudioCodec: tc.audio}
@@ -199,7 +206,7 @@ func TestCanRemuxAgreesWithRemux(t *testing.T) {
 	}
 
 	for _, name := range names {
-		for _, target := range []sprocket.Container{sprocket.MP4, sprocket.M4V, sprocket.ThreeGP} {
+		for _, target := range []sprocket.Container{sprocket.MP4, sprocket.M4V, sprocket.ThreeGP, sprocket.TS} {
 			t.Run(name+"/"+string(target), func(t *testing.T) {
 				source := readCorpus(t, name)
 				allowed := sprocket.CanRemux(probeBytes(t, source), target)
