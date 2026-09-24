@@ -43,11 +43,11 @@ func keyframe(t testing.TB, name string) image.Image {
 	t.Helper()
 
 	sample := syncSample(t, name)
-	img, err := decode.Keyframe(sample.Codec, sample.Config, sample.NALLengthSize, sample.Data)
+	picture, err := decode.Keyframe(sample.Codec, sample.Config, sample.NALLengthSize, sample.Data)
 	if err != nil {
 		t.Fatalf("decode %s: %v", name, err)
 	}
-	return img
+	return picture.Image
 }
 
 // luma reports the distinct luma values in an image and the mean luma of its
@@ -199,9 +199,9 @@ func TestKeyframeRejects(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			img, err := decode.Keyframe("hevc", test.config, test.nalLengthSize, test.data)
+			picture, err := decode.Keyframe("hevc", test.config, test.nalLengthSize, test.data)
 			if err == nil {
-				t.Fatalf("decoded %v with no error", img.Bounds())
+				t.Fatalf("decoded %v with no error", picture.Image.Bounds())
 			}
 			if !errors.Is(err, decode.ErrCorruptSample) && !errors.Is(err, decode.ErrUnsupportedCodec) {
 				t.Errorf("error is %v, want ErrCorruptSample or ErrUnsupportedCodec", err)
@@ -231,10 +231,11 @@ func TestKeyframeChroma(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			config, sample := encodeKeyframe(t, width, height, test.chroma)
-			img, err := decode.Keyframe("hevc", config, 4, sample)
+			picture, err := decode.Keyframe("hevc", config, 4, sample)
 			if err != nil {
 				t.Fatalf("decode: %v", err)
 			}
+			img := picture.Image
 			if got, want := img.Bounds(), image.Rect(0, 0, width, height); got != want {
 				t.Errorf("bounds are %v, want %v", got, want)
 			}
@@ -275,5 +276,24 @@ func TestKeyframeFrameTooLarge(t *testing.T) {
 	_, err := decode.Keyframe("hevc", config, sample.NALLengthSize, sample.Data)
 	if !errors.Is(err, decode.ErrFrameTooLarge) {
 		t.Errorf("error is %v, want ErrFrameTooLarge", err)
+	}
+}
+
+// TestKeyframeReportsTheHEVCColorDescription checks that the matrix and range
+// the sequence declares come back with the picture. The corpus is encoded with
+// no color description, which ffprobe reports as an unknown color space, so
+// what comes back is H.273's unspecified.
+func TestKeyframeReportsTheHEVCColorDescription(t *testing.T) {
+	for _, name := range []string{"hevc-aac-8bit.mov", "hevc-aac-10bit.mov"} {
+		t.Run(name, func(t *testing.T) {
+			sample := syncSample(t, name)
+			picture, err := decode.Keyframe(sample.Codec, sample.Config, sample.NALLengthSize, sample.Data)
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if picture.Matrix != unspecified || picture.FullRange {
+				t.Errorf("matrix %d, full range %v; want %d, false", picture.Matrix, picture.FullRange, unspecified)
+			}
+		})
 	}
 }

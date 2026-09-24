@@ -3,43 +3,10 @@ package decode_test
 import (
 	"image"
 	"image/color"
-	"math"
 	"testing"
 
 	"github.com/autobutler-org/sprocket/internal/decode"
 )
-
-// reference converts one studio-range YCbCr triple to RGB in floating point.
-// It is written from the coefficients rather than shared with the package, so
-// it fails if the fixed-point version drifts.
-func reference(y, cb, cr float64, bt709 bool) (r, g, b float64) {
-	const (
-		lumaScale  = 255.0 / 219
-		lumaFloor  = 16.0
-		chromaMid  = 128.0
-		bt601Red   = 0.299
-		bt601Blue  = 0.114
-		bt709Red   = 0.2126
-		bt709Blue  = 0.0722
-		chromaSpan = 255.0 / 224
-	)
-	kr, kb := bt601Red, bt601Blue
-	if bt709 {
-		kr, kb = bt709Red, bt709Blue
-	}
-	kg := 1 - kr - kb
-
-	luma := (y - lumaFloor) * lumaScale
-	blue := (cb - chromaMid) * chromaSpan
-	red := (cr - chromaMid) * chromaSpan
-	return luma + 2*(1-kr)*red,
-		luma - 2*kb*(1-kb)/kg*blue - 2*kr*(1-kr)/kg*red,
-		luma + 2*(1-kb)*blue
-}
-
-func clampFloat(v float64) int {
-	return int(math.Round(math.Min(math.Max(v, 0), 255)))
-}
 
 // ycbcr444 builds a 4:4:4 image of the given size from one sample per pixel.
 func ycbcr444(width, height int, samples [][3]byte) *image.YCbCr {
@@ -50,46 +17,76 @@ func ycbcr444(width, height int, samples [][3]byte) *image.YCbCr {
 	return img
 }
 
-func TestRGBAAppliesStudioRangeAndTheMatrix(t *testing.T) {
+// The H.273 matrix_coefficients code points the tests name.
+const (
+	bt709       = 1
+	unspecified = 2
+	bt601       = 6
+	bt2020      = 9
+)
+
+func TestRGBAAppliesTheMatrixAndTheRange(t *testing.T) {
+	// The expected values are worked by hand from the Kr and Kb of each
+	// standard and the range equations of H.273, rounded to the nearest byte.
+	// They are literals rather than a formula so that they fail if the
+	// package's fixed-point arithmetic drifts from the spec.
 	samples := [][3]byte{
+		{100, 110, 170},
+		{150, 100, 110},
 		{16, 128, 128},  // studio black
 		{235, 128, 128}, // studio white
-		{126, 128, 128}, // mid gray
-		{126, 128, 240}, // saturated red
 	}
 	for _, tc := range []struct {
-		name          string
-		width, height int
-		bt709         bool
+		name      string
+		matrix    int
+		fullRange bool
+		want      [][3]int
 	}{
-		{name: "bt601 under 720 lines", width: 4, height: 1},
-		{name: "bt709 at 720 lines", width: 4, height: 720, bt709: true},
+		{"bt601 studio", bt601, false, [][3]int{{165, 71, 62}, {127, 182, 100}, {0, 0, 0}, {255, 255, 255}}},
+		{"bt601 full", bt601, true, [][3]int{{159, 76, 68}, {125, 172, 100}, {16, 16, 16}, {235, 235, 235}}},
+		{"bt709 studio", bt709, false, [][3]int{{173, 79, 60}, {124, 172, 97}, {0, 0, 0}, {255, 255, 255}}},
+		{"bt709 full", bt709, true, [][3]int{{166, 84, 67}, {122, 164, 98}, {16, 16, 16}, {235, 235, 235}}},
+		{"bt2020 studio", bt2020, false, [][3]int{{168, 74, 59}, {126, 173, 96}, {0, 0, 0}, {255, 255, 255}}},
+		{"bt2020 full", bt2020, true, [][3]int{{162, 79, 66}, {123, 165, 97}, {16, 16, 16}, {235, 235, 235}}},
+		// Unsignaled video is read as BT.601, as ffmpeg reads it, and so is a
+		// matrix this package has no coefficients for.
+		{"unspecified", unspecified, false, [][3]int{{165, 71, 62}, {127, 182, 100}, {0, 0, 0}, {255, 255, 255}}},
+		{"unknown code point", 4, false, [][3]int{{165, 71, 62}, {127, 182, 100}, {0, 0, 0}, {255, 255, 255}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rows := make([][3]byte, 0, tc.width*tc.height)
-			for range tc.height {
-				rows = append(rows, samples...)
+			got := decode.RGBA(decode.Picture{
+				Image:  ycbcr444(len(samples), 1, samples),
+				Matrix: tc.matrix, FullRange: tc.fullRange,
+			})
+			if bounds := got.Bounds(); bounds != image.Rect(0, 0, len(samples), 1) {
+				t.Fatalf("bounds = %v, want %v", bounds, image.Rect(0, 0, len(samples), 1))
 			}
-			got := decode.RGBA(ycbcr444(tc.width, tc.height, rows))
-
-			if bounds := got.Bounds(); bounds != image.Rect(0, 0, tc.width, tc.height) {
-				t.Fatalf("bounds = %v, want %v", bounds, image.Rect(0, 0, tc.width, tc.height))
-			}
-			for x, s := range samples {
-				wantR, wantG, wantB := reference(float64(s[0]), float64(s[1]), float64(s[2]), tc.bt709)
+			for x, want := range tc.want {
 				c := got.RGBAAt(x, 0)
 				const tolerance = 1
-				if abs(int(c.R)-clampFloat(wantR)) > tolerance ||
-					abs(int(c.G)-clampFloat(wantG)) > tolerance ||
-					abs(int(c.B)-clampFloat(wantB)) > tolerance {
-					t.Errorf("pixel %d of %v = (%d,%d,%d), want (%d,%d,%d)", x, s,
-						c.R, c.G, c.B, clampFloat(wantR), clampFloat(wantG), clampFloat(wantB))
+				if abs(int(c.R)-want[0]) > tolerance || abs(int(c.G)-want[1]) > tolerance ||
+					abs(int(c.B)-want[2]) > tolerance {
+					t.Errorf("pixel %d of %v = (%d,%d,%d), want %v", x, samples[x], c.R, c.G, c.B, want)
 				}
 				if c.A != 0xff {
 					t.Errorf("pixel %d alpha = %d, want 255", x, c.A)
 				}
 			}
 		})
+	}
+}
+
+func TestRGBAReadsUnsignaledHDAsBT601(t *testing.T) {
+	// Picture height used to pick BT.709 at 720 lines and up. It no longer
+	// does: an unsignaled picture of any size gets the BT.601 matrix.
+	const width, height = 1, 720
+	samples := make([][3]byte, height)
+	for i := range samples {
+		samples[i] = [3]byte{100, 110, 170}
+	}
+	got := decode.RGBA(decode.Picture{Image: ycbcr444(width, height, samples), Matrix: unspecified})
+	if c := got.RGBAAt(0, height-1); abs(int(c.R)-165) > 1 || abs(int(c.G)-71) > 1 || abs(int(c.B)-62) > 1 {
+		t.Errorf("pixel = (%d,%d,%d), want the BT.601 (165,71,62)", c.R, c.G, c.B)
 	}
 }
 
@@ -109,7 +106,7 @@ func TestRGBAReadsSubsampledChroma(t *testing.T) {
 	}
 	img.Cb[0], img.Cr[0] = 128, 240
 
-	got := decode.RGBA(img)
+	got := decode.RGBA(decode.Picture{Image: img})
 	want := got.RGBAAt(0, 0)
 	if want.R <= want.B {
 		t.Errorf("pixel = %v, want a red one", want)
@@ -125,7 +122,7 @@ func TestRGBAStretchesAMonochromePlane(t *testing.T) {
 	img := image.NewGray(image.Rect(0, 0, 3, 1))
 	img.Pix[0], img.Pix[1], img.Pix[2] = 16, 126, 235
 
-	got := decode.RGBA(img)
+	got := decode.RGBA(decode.Picture{Image: img})
 	for x, want := range []uint8{0, 128, 255} {
 		c := got.RGBAAt(x, 0)
 		if c.R != c.G || c.G != c.B {
@@ -141,7 +138,7 @@ func TestRGBACopiesAnythingElse(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	img.SetNRGBA(0, 0, color.NRGBA{R: 1, G: 2, B: 3, A: 0xff})
 
-	if got := decode.RGBA(img).RGBAAt(0, 0); got != (color.RGBA{R: 1, G: 2, B: 3, A: 0xff}) {
+	if got := decode.RGBA(decode.Picture{Image: img}).RGBAAt(0, 0); got != (color.RGBA{R: 1, G: 2, B: 3, A: 0xff}) {
 		t.Errorf("pixel = %v, want the source color", got)
 	}
 }
@@ -151,7 +148,7 @@ func TestRGBAConvertsADecodedKeyframe(t *testing.T) {
 	// to do, so the darkest pixel of a real frame has to reach further down than
 	// image.YCbCr's own full-range conversion puts it.
 	img := keyframe(t, "hevc-aac-8bit.mov")
-	got := decode.RGBA(img)
+	got := decode.RGBA(decode.Picture{Image: img})
 
 	var darkest, naive int
 	darkest, naive = 255, 255
@@ -166,5 +163,17 @@ func TestRGBAConvertsADecodedKeyframe(t *testing.T) {
 	}
 	if darkest >= naive {
 		t.Errorf("darkest pixel is %d with the studio range applied and %d without, want it lower", darkest, naive)
+	}
+}
+
+func TestRGBALeavesAFullRangeMonochromePlane(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, 3, 1))
+	img.Pix[0], img.Pix[1], img.Pix[2] = 0, 126, 255
+
+	got := decode.RGBA(decode.Picture{Image: img, FullRange: true})
+	for x, want := range []uint8{0, 126, 255} {
+		if c := got.RGBAAt(x, 0); c != (color.RGBA{R: want, G: want, B: want, A: 0xff}) {
+			t.Errorf("pixel %d = %v, want %d", x, c, want)
+		}
 	}
 }

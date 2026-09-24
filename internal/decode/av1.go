@@ -14,7 +14,7 @@ import (
 // unit, and a keyframe's temporal unit carries its own sequence header, so the
 // container's configuration record is not needed and is not read: feeding the
 // av1C record's configOBUs ahead of the frame produces the same picture.
-func av1Keyframe(sample []byte) (image.Image, error) {
+func av1Keyframe(sample []byte) (Picture, error) {
 	decoder := av1.Decoder{
 		Threads: min(runtime.GOMAXPROCS(0), maxThreads),
 		// The area bound is this package's rather than the decoder's default,
@@ -24,16 +24,20 @@ func av1Keyframe(sample []byte) (image.Image, error) {
 	pictures, err := decoder.DecodeOBUs(sample)
 	if err != nil {
 		if errors.Is(err, av1.ErrFrameTooLarge) {
-			return nil, fmt.Errorf("%w: av1: %w", ErrFrameTooLarge, err)
+			return Picture{}, fmt.Errorf("%w: av1: %w", ErrFrameTooLarge, err)
 		}
-		return nil, fmt.Errorf("%w: av1: %w", ErrCorruptSample, err)
+		return Picture{}, fmt.Errorf("%w: av1: %w", ErrCorruptSample, err)
 	}
 	if len(pictures) == 0 {
-		return nil, fmt.Errorf("%w: the decoder read the temporal unit and produced no picture", ErrCorruptSample)
+		return Picture{}, fmt.Errorf("%w: the decoder read the temporal unit and produced no picture", ErrCorruptSample)
 	}
 	// The picture is not released back to the decoder: the image below aliases
 	// its planes, and the decoder is dropped with this call's frame anyway.
-	return av1PictureImage(pictures[0])
+	img, err := av1PictureImage(pictures[0])
+	if err != nil {
+		return Picture{}, err
+	}
+	return Picture{Image: img, Matrix: pictures[0].MatrixCoeffs, FullRange: pictures[0].FullRange}, nil
 }
 
 // av1PictureImage wraps a decoded picture as an image, shifting a sequence

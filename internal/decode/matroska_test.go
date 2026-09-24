@@ -9,6 +9,7 @@ import (
 	"github.com/autobutler-org/sprocket/internal/corpus"
 	"github.com/autobutler-org/sprocket/internal/decode"
 	"github.com/autobutler-org/sprocket/internal/matroska"
+	"github.com/gen2brain/gav1d/av1"
 )
 
 // matroskaSample reads the first keyframe of a Matroska corpus file, which is
@@ -43,11 +44,11 @@ func matroskaKeyframe(t testing.TB, name string) image.Image {
 	t.Helper()
 
 	sample := matroskaSample(t, name)
-	img, err := decode.Keyframe(sample.Codec, sample.Config, sample.NALLengthSize, sample.Data)
+	picture, err := decode.Keyframe(sample.Codec, sample.Config, sample.NALLengthSize, sample.Data)
 	if err != nil {
 		t.Fatalf("decode %s: %v", name, err)
 	}
-	return img
+	return picture.Image
 }
 
 func TestKeyframeVP8AndAV1(t *testing.T) {
@@ -141,5 +142,39 @@ func TestKeyframeVP8AndAV1Reject(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// TestKeyframeReportsTheVP8AndAV1ColorDescription checks what each decoder
+// says about color. The AV1 corpus file declares nothing, so its matrix is
+// unspecified. VP8 has one color space, BT.601, so that is what it reports.
+func TestKeyframeReportsTheVP8AndAV1ColorDescription(t *testing.T) {
+	for name, want := range map[string]int{"av1-opus.webm": unspecified, "vp8-vorbis.webm": bt601} {
+		t.Run(name, func(t *testing.T) {
+			sample := matroskaSample(t, name)
+			picture, err := decode.Keyframe(sample.Codec, sample.Config, sample.NALLengthSize, sample.Data)
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if picture.Matrix != want || picture.FullRange {
+				t.Errorf("matrix %d, full range %v; want %d, false", picture.Matrix, picture.FullRange, want)
+			}
+		})
+	}
+}
+
+// TestKeyframeReportsAnAV1FullRangeFlag encodes a frame that sets color_range,
+// which the corpus has no example of, and checks the flag comes through.
+func TestKeyframeReportsAnAV1FullRangeFlag(t *testing.T) {
+	sample := av1.Encode(av1.EncodeConfig{Width: 16, Height: 16, BitDepth: 8, QIndex: 100, FullRange: true})
+	if sample == nil {
+		t.Fatal("the encoder refused the configuration")
+	}
+	picture, err := decode.Keyframe("av1", nil, 0, sample)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !picture.FullRange {
+		t.Error("full range is false, want true")
 	}
 }

@@ -140,9 +140,9 @@ func TestKeyframeH264Rejects(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			img, err := decode.Keyframe("h264", test.config, test.nalLengthSize, test.data)
+			picture, err := decode.Keyframe("h264", test.config, test.nalLengthSize, test.data)
 			if err == nil {
-				t.Fatalf("decoded %v with no error", img.Bounds())
+				t.Fatalf("decoded %v with no error", picture.Image.Bounds())
 			}
 			if !errors.Is(err, decode.ErrCorruptSample) && !errors.Is(err, decode.ErrUnsupportedCodec) {
 				t.Errorf("error is %v, want ErrCorruptSample or ErrUnsupportedCodec", err)
@@ -209,10 +209,11 @@ func FuzzH264Keyframe(f *testing.F) {
 	f.Add([]byte(nil), []byte(nil))
 
 	f.Fuzz(func(t *testing.T, config, sample []byte) {
-		img, err := decode.Keyframe("h264", config, fuzzNALLengthSize, sample)
+		picture, err := decode.Keyframe("h264", config, fuzzNALLengthSize, sample)
 		if err != nil {
 			return
 		}
+		img := picture.Image
 		if bounds := img.Bounds(); bounds.Dx() <= 0 || bounds.Dy() <= 0 {
 			t.Errorf("decoded an image of %v", bounds)
 		}
@@ -224,4 +225,18 @@ func FuzzH264Keyframe(f *testing.F) {
 			}
 		}
 	})
+}
+
+// TestKeyframeH264IsUnsignaled holds what the H.264 path says about color: the
+// decoder does not expose the sequence's color description, so the picture
+// comes back unspecified whatever the stream declares.
+func TestKeyframeH264IsUnsignaled(t *testing.T) {
+	sample := syncSample(t, "h264-aac.mp4")
+	picture, err := decode.Keyframe(sample.Codec, sample.Config, sample.NALLengthSize, sample.Data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if picture.Matrix != unspecified || picture.FullRange {
+		t.Errorf("matrix %d, full range %v; want %d, false", picture.Matrix, picture.FullRange, unspecified)
+	}
 }

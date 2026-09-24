@@ -30,14 +30,14 @@ const (
 // h264Keyframe decodes an H.264 keyframe. The parameter sets come from the avcC
 // record and the slices from the sample, which is what a container splits
 // between the two.
-func h264Keyframe(config []byte, nalLengthSize int, sample []byte) (image.Image, error) {
+func h264Keyframe(config []byte, nalLengthSize int, sample []byte) (Picture, error) {
 	if nalLengthSize < 1 || nalLengthSize > 4 {
-		return nil, fmt.Errorf("%w: the NAL length prefix is %d bytes, want 1 through 4",
+		return Picture{}, fmt.Errorf("%w: the NAL length prefix is %d bytes, want 1 through 4",
 			ErrCorruptSample, nalLengthSize)
 	}
 	stream, err := avccAnnexB(config, nalLengthSize, sample)
 	if err != nil {
-		return nil, err
+		return Picture{}, err
 	}
 
 	decoder := h264.NewDecoder()
@@ -46,15 +46,21 @@ func h264Keyframe(config []byte, nalLengthSize int, sample []byte) (image.Image,
 
 	pictures, err := decoder.Decode(stream)
 	if err != nil {
-		return nil, h264Error(err)
+		return Picture{}, h264Error(err)
 	}
 	if len(pictures) == 0 {
 		// A buffer the decoder reads to the end without assembling a picture,
 		// an empty one among them, comes back as no pictures and no error.
-		return nil, fmt.Errorf("%w: the decoder read %d bytes and produced no picture",
+		return Picture{}, fmt.Errorf("%w: the decoder read %d bytes and produced no picture",
 			ErrCorruptSample, len(stream))
 	}
-	return frameImage(pictures[0])
+	img, err := frameImage(pictures[0])
+	if err != nil {
+		return Picture{}, err
+	}
+	// The decoder does not expose the sequence's VUI, so the color description
+	// is unknown here whatever the stream declares.
+	return Picture{Image: img, Matrix: matrixUnspecified}, nil
 }
 
 // avccAnnexB turns an avcC record and a length-prefixed sample into the single
