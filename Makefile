@@ -90,6 +90,22 @@ test: ## Run tests
 		$(GO) tool cover -func=coverage.out
 	fi
 
+##@ Performance
+
+# Times every operation against ffmpeg doing the same work. The code sits behind the
+# perf build tag, so `make test` and `make check` never build it and never need ffmpeg.
+# PERF_ITERATIONS in the environment overrides the five timed runs per case.
+PERF_OUT ?= ./test-results/perf
+
+.PHONY: test/perf
+test/perf: ## Compare speed and memory against ffmpeg (needs ffmpeg)
+	if ! command -v ffmpeg >/dev/null 2>&1; then
+		echo "ffmpeg is not installed. Run 'brew install ffmpeg' (macOS) or 'apt-get install ffmpeg' first."
+		exit 1
+	fi
+	# go test runs in the package directory, so the output path has to be absolute.
+	PERF_OUT="$(abspath $(PERF_OUT))" $(GO) test -tags perf,h264 -run TestCompare -count=1 -timeout 30m -v ./internal/perf/
+
 ##@ Test Data
 
 # ffmpeg is a contributor's tool, not a dependency of this library. Nothing in the
