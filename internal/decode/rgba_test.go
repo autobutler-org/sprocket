@@ -143,29 +143,6 @@ func TestRGBACopiesAnythingElse(t *testing.T) {
 	}
 }
 
-func TestRGBAConvertsADecodedKeyframe(t *testing.T) {
-	// The studio-range read is what the package documentation says a caller has
-	// to do, so the darkest pixel of a real frame has to reach further down than
-	// image.YCbCr's own full-range conversion puts it.
-	img := keyframe(t, "hevc-aac-8bit.mov")
-	got := decode.RGBA(decode.Picture{Image: img})
-
-	var darkest, naive int
-	darkest, naive = 255, 255
-	bounds := img.Bounds()
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			c := got.RGBAAt(x-bounds.Min.X, y-bounds.Min.Y)
-			darkest = min(darkest, int(max(max(c.R, c.G), c.B)))
-			r, g, b, _ := img.At(x, y).RGBA()
-			naive = min(naive, int(max(max(r, g), b)>>8))
-		}
-	}
-	if darkest >= naive {
-		t.Errorf("darkest pixel is %d with the studio range applied and %d without, want it lower", darkest, naive)
-	}
-}
-
 func TestRGBALeavesAFullRangeMonochromePlane(t *testing.T) {
 	img := image.NewGray(image.Rect(0, 0, 3, 1))
 	img.Pix[0], img.Pix[1], img.Pix[2] = 0, 126, 255

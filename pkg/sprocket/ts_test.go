@@ -244,9 +244,7 @@ func TestRemuxTSIntoMP4KeepsTheThumbnail(t *testing.T) {
 			out := remuxed(t, name, sprocket.MP4)
 			for _, at := range []time.Duration{0, 1300 * time.Millisecond} {
 				want, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), at, sprocket.ThumbnailOptions{})
-				if err != nil && !h264Compiled && errors.Is(err, sprocket.ErrUnsupportedCodec) {
-					t.Skipf("%s needs the h264 build tag", name)
-				}
+				skipIfCompiledOut(t, name, err)
 				if err != nil {
 					t.Fatalf("thumbnail the source at %v: %v", at, err)
 				}
@@ -292,9 +290,7 @@ func TestRemuxMP4IntoTSKeepsTheThumbnail(t *testing.T) {
 	out := remuxed(t, gop12, sprocket.TS)
 	for _, at := range []time.Duration{0, 1300 * time.Millisecond} {
 		want, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), at, sprocket.ThumbnailOptions{})
-		if err != nil && !h264Compiled && errors.Is(err, sprocket.ErrUnsupportedCodec) {
-			t.Skip("needs the h264 build tag")
-		}
+		skipIfCompiledOut(t, gop12, err)
 		if err != nil {
 			t.Fatalf("thumbnail the source at %v: %v", at, err)
 		}

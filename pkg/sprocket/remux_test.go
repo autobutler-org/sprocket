@@ -65,9 +65,7 @@ func TestRemuxPreservesTheThumbnail(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			source := readCorpus(t, name)
 			want, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), 0, sprocket.ThumbnailOptions{})
-			if err != nil && !h264Compiled && errors.Is(err, sprocket.ErrUnsupportedCodec) {
-				t.Skipf("%s needs the h264 build tag", name)
-			}
+			skipIfCompiledOut(t, name, err)
 			if err != nil {
 				t.Fatalf("thumbnail the source: %v", err)
 			}

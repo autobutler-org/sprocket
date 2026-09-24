@@ -2,8 +2,8 @@
 //
 // Keyframe is the only entry point. It takes what a container already knows
 // about a sample, dispatches on the codec short name, and returns the decoded
-// picture. HEVC, VP8, and AV1 are implemented, and H.264 behind a build tag. A
-// codec with no decoder returns ErrUnsupportedCodec, which is the signal for a
+// picture. VP8 and AV1 are implemented, and H.264 and HEVC each behind a build
+// tag. A codec with no decoder returns ErrUnsupportedCodec, which is the signal for a
 // caller to fall back rather than to fail. VP9 is the one codec the containers
 // this library reads can carry that has no decoder here: nothing pure Go
 // decodes it today.
@@ -29,6 +29,14 @@
 // deliberately rather than acquiring it through go get. The build tag is the
 // whole of the difference: the decoder is a Go dependency like any other, and
 // the behavior under the tag is the same shape as the HEVC path.
+//
+// # The hevc build tag
+//
+// HEVC is compiled in only under the hevc build tag, and without it an HEVC
+// sample returns ErrUnsupportedCodec naming the tag. HEVC is licensed through
+// several patent pools, and a default build decodes only royalty-free codecs,
+// AV1 and VP8. The two tags are independent, and a build that wants every
+// decoder passes -tags h264,hevc.
 //
 // The H.264 decoder reads 8 bit 4:2:0 progressive sequences. A 10 bit, 4:2:2,
 // 4:4:4, monochrome, or interlaced sequence returns ErrUnsupportedCodec. One
@@ -81,7 +89,7 @@
 // # Memory
 //
 // One 3840x2160 Main10 keyframe on darwin/arm64, decoded in a fresh process
-// from a 164 KB sample: 55 ms and 69 MiB of peak resident memory, of which
+// from a 164 KB sample with the hevc build tag: 55 ms and 69 MiB of peak resident memory, of which
 // 12 MiB is the image handed back. Six sequential decodes in one process run
 // 45 to 50 ms each and peak at 162 MiB, since the runtime keeps what it has
 // grown rather than returning it. There is no per-process warmup cost.
@@ -105,9 +113,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"runtime"
-
-	"github.com/gen2brain/h265/hevc"
 )
 
 // Sentinel errors. Every error this package returns wraps one of these, so a
@@ -135,7 +140,7 @@ const (
 	// ponytail: an 8K ceiling, not a thumbnail-sized one, which costs about
 	// 100 MB of planes at 10 bits. Lower it if decoding an 8K frame to make a
 	// 200 pixel thumbnail is not worth that.
-	maxLumaSamples = hevc.MaxLumaSamples
+	maxLumaSamples = 35651584
 	// maxThreads bounds the goroutines one picture is spread over.
 	//
 	// ponytail: a thumbnail is a background chore, so it does not get the whole
@@ -193,178 +198,8 @@ func Keyframe(codec string, config []byte, nalLengthSize int, sample []byte) (Pi
 	}
 }
 
-// hevcKeyframe decodes an HEVC keyframe. The parameter sets come from the hvcC
-// record and the slices from the sample, which is what a container splits
-// between the two.
-func hevcKeyframe(config []byte, nalLengthSize int, sample []byte) (Picture, error) {
-	if nalLengthSize < 1 || nalLengthSize > 4 {
-		return Picture{}, fmt.Errorf("%w: the NAL length prefix is %d bytes, want 1 through 4",
-			ErrCorruptSample, nalLengthSize)
-	}
-	nals, err := hvccParameterSets(config)
-	if err != nil {
-		return Picture{}, err
-	}
-	nals = append(nals, hevc.SplitHVCC(sample, nalLengthSize)...)
-	if err := checkSequenceSize(nals); err != nil {
-		return Picture{}, err
-	}
-
-	var decoder hevc.Decoder
-	decoder.Threads(min(runtime.GOMAXPROCS(0), maxThreads))
-	decoder.FrameSizeLimit(maxLumaSamples)
-
-	var picture *hevc.Picture
-	for _, nal := range nals {
-		pictures, err := decoder.DecodeNAL(nal)
-		if err != nil {
-			return Picture{}, decodeError(err)
-		}
-		if len(pictures) > 0 {
-			picture = pictures[0]
-		}
-	}
-	if picture == nil {
-		// A single access unit is normally released by the next one, so a
-		// keyframe on its own usually surfaces here rather than above.
-		if pictures := decoder.Flush(); len(pictures) > 0 {
-			picture = pictures[0]
-		}
-	}
-	if picture == nil {
-		return Picture{}, fmt.Errorf("%w: the decoder read %d NAL units and produced no picture",
-			ErrCorruptSample, len(nals))
-	}
-	img, err := pictureImage(picture)
-	if err != nil {
-		return Picture{}, err
-	}
-	return Picture{Image: img, Matrix: int(picture.ColorMatrix), FullRange: picture.FullRange}, nil
-}
-
-// decodeError maps what the decoder reports onto this package's sentinels.
-func decodeError(err error) error {
-	switch {
-	case errors.Is(err, hevc.ErrUnsupported):
-		// The decoder returns this both for a coding tool it does not implement
-		// and for a sequence over FrameSizeLimit. checkSequenceSize has already
-		// refused the second, so what is left is the first.
-		return fmt.Errorf("%w: hevc: %w", ErrUnsupportedCodec, err)
-	default:
-		return fmt.Errorf("%w: %w", ErrCorruptSample, err)
-	}
-}
-
-// checkSequenceSize refuses a sequence whose pictures are over the cap. The
-// decoder enforces the same bound, but it reports a picture over the cap and a
-// coding tool it does not implement as the same error, and the two mean
-// different things to a caller.
-func checkSequenceSize(nals []hevc.NALUnit) error {
-	for _, nal := range nals {
-		if nal.Type != hevc.NALSPS {
-			continue
-		}
-		width, height, ok := spsPictureSize(nal.RBSP)
-		if !ok {
-			return fmt.Errorf("%w: unreadable sequence parameter set", ErrCorruptSample)
-		}
-		if int64(width)*int64(height) > maxLumaSamples {
-			return fmt.Errorf("%w: %dx%d is %d luma samples, over the %d sample cap",
-				ErrFrameTooLarge, width, height, int64(width)*int64(height), int64(maxLumaSamples))
-		}
-	}
-	return nil
-}
-
-// pictureImage wraps a decoded picture as an image. An 8-bit picture aliases the
-// decoder's planes, which is safe because the decoder is dropped with this
-// call's frame and the picture is never released back to it.
-func pictureImage(picture *hevc.Picture) (image.Image, error) {
-	width, height := picture.CropW, picture.CropH
-	if width <= 0 || height <= 0 {
-		return nil, fmt.Errorf("%w: the conformance window is %dx%d", ErrCorruptSample, width, height)
-	}
-	rect := image.Rect(0, 0, width, height)
-
-	// picture.ChromaFormat is chroma_format_idc of 7.4.3.2, not the encoder's
-	// ChromaFormat constants.
-	var ratio image.YCbCrSubsampleRatio
-	subX, subY := 1, 1
-	switch picture.ChromaFormat {
-	case 0: // Monochrome, which has no chroma planes at all.
-	case 1:
-		ratio, subX, subY = image.YCbCrSubsampleRatio420, 2, 2
-	case 2:
-		ratio, subX = image.YCbCrSubsampleRatio422, 2
-	case 3:
-		ratio = image.YCbCrSubsampleRatio444
-	default:
-		return nil, fmt.Errorf("%w: chroma_format_idc %d", ErrCorruptSample, picture.ChromaFormat)
-	}
-
-	luma, err := eightBitPlane(picture.Y, picture.Y16, picture.BitDepth,
-		picture.StrideY, picture.CropX, picture.CropY, width, height)
-	if err != nil {
-		return nil, err
-	}
-	if picture.ChromaFormat == 0 {
-		return &image.Gray{Pix: luma.pix, Stride: luma.stride, Rect: rect}, nil
-	}
-
-	chromaW, chromaH := (width+subX-1)/subX, (height+subY-1)/subY
-	blue, err := eightBitPlane(picture.Cb, picture.Cb16, picture.BitDepthC,
-		picture.StrideC, picture.CropX/subX, picture.CropY/subY, chromaW, chromaH)
-	if err != nil {
-		return nil, err
-	}
-	red, err := eightBitPlane(picture.Cr, picture.Cr16, picture.BitDepthC,
-		picture.StrideC, picture.CropX/subX, picture.CropY/subY, chromaW, chromaH)
-	if err != nil {
-		return nil, err
-	}
-	return &image.YCbCr{
-		Y: luma.pix, Cb: blue.pix, Cr: red.pix,
-		YStride: luma.stride, CStride: blue.stride,
-		SubsampleRatio: ratio, Rect: rect,
-	}, nil
-}
-
 // plane is one 8-bit image plane with its conformance crop already applied.
 type plane struct {
 	pix    []byte
 	stride int
-}
-
-// eightBitPlane returns a cropped 8-bit view of one decoded plane. An 8-bit
-// plane is aliased in place; a deeper one is shifted down into a packed copy,
-// which loses the low bits and nothing else.
-func eightBitPlane(p8 []uint8, p16 []uint16, depth, stride, x, y, width, height int) (plane, error) {
-	if stride < width || x < 0 || y < 0 {
-		return plane{}, fmt.Errorf("%w: a %dx%d plane at (%d,%d) has stride %d",
-			ErrCorruptSample, width, height, x, y, stride)
-	}
-	offset := y*stride + x
-	need := (height-1)*stride + width
-
-	if p16 != nil {
-		if len(p16)-offset < need {
-			return plane{}, fmt.Errorf("%w: a %dx%d plane needs %d samples and has %d",
-				ErrCorruptSample, width, height, need, len(p16)-offset)
-		}
-		shift := min(max(depth-8, 0), 8)
-		src := p16[offset:]
-		pix := make([]byte, width*height)
-		for row := range height {
-			in, out := src[row*stride:], pix[row*width:]
-			for i := range width {
-				out[i] = byte(in[i] >> shift)
-			}
-		}
-		return plane{pix: pix, stride: width}, nil
-	}
-	if len(p8)-offset < need {
-		return plane{}, fmt.Errorf("%w: a %dx%d plane needs %d samples and has %d",
-			ErrCorruptSample, width, height, need, len(p8)-offset)
-	}
-	return plane{pix: p8[offset:], stride: stride}, nil
 }

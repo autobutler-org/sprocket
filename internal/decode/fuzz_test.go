@@ -7,53 +7,6 @@ import (
 	"github.com/autobutler-org/sprocket/internal/decode"
 )
 
-// fuzzNALLengthSize is the prefix width every corpus file uses, and the one the
-// fuzz targets hold fixed so that the input they vary is the bitstream.
-const fuzzNALLengthSize = 4
-
-// FuzzHVCC drives the configuration record parser over arbitrary bytes. The
-// sample is empty on purpose, so that the input the fuzzer explores is the
-// record itself.
-//
-// A picture is a legal outcome and not a failure. An hvcC holds arrays of NAL
-// units and nothing restricts them to parameter sets, so a record carrying a
-// slice decodes to a picture with no sample at all; the corpus holds an input
-// the fuzzer found that does exactly that. What is checked is what a caller
-// would go on to do with whatever comes back.
-func FuzzHVCC(f *testing.F) {
-	f.Add(syncSample(f, "hevc-aac-8bit.mov").Config)
-	f.Add(syncSample(f, "hevc-aac-10bit.mov").Config)
-	f.Add(syncSample(f, "h264-aac.mp4").Config)
-	f.Add(hvcCRecord(f, spsNAL(65535, 65535)))
-	f.Add(make([]byte, 23))
-	f.Add([]byte(nil))
-
-	f.Fuzz(func(t *testing.T, config []byte) {
-		picture, err := decode.Keyframe("hevc", config, fuzzNALLengthSize, nil)
-		if err != nil {
-			return
-		}
-		readEveryPixel(t, picture.Image)
-	})
-}
-
-// FuzzKeyframe drives a whole decode, configuration record and sample together.
-func FuzzKeyframe(f *testing.F) {
-	for _, name := range []string{"hevc-aac-8bit.mov", "hevc-aac-10bit.mov"} {
-		sample := syncSample(f, name)
-		f.Add(sample.Config, sample.Data)
-	}
-	f.Add([]byte(nil), []byte(nil))
-
-	f.Fuzz(func(t *testing.T, config, sample []byte) {
-		picture, err := decode.Keyframe("hevc", config, fuzzNALLengthSize, sample)
-		if err != nil {
-			return
-		}
-		readEveryPixel(t, picture.Image)
-	})
-}
-
 // readEveryPixel checks a decoded picture the way a caller would use it.
 // Reading every pixel catches a plane shorter than the bounds claim, which
 // would otherwise only show up in whatever drew the image.

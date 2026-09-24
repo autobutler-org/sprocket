@@ -267,9 +267,7 @@ func TestRemuxMatroskaIntoMP4KeepsTheThumbnail(t *testing.T) {
 
 			for _, at := range []time.Duration{0, 1300 * time.Millisecond} {
 				want, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), at, sprocket.ThumbnailOptions{})
-				if err != nil && !h264Compiled && errors.Is(err, sprocket.ErrUnsupportedCodec) {
-					t.Skipf("%s needs the h264 build tag", name)
-				}
+				skipIfCompiledOut(t, name, err)
 				if err != nil {
 					t.Fatalf("thumbnail the source at %v: %v", at, err)
 				}

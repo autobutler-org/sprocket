@@ -7,7 +7,8 @@ carries from the work it came from. sprocket itself is MIT No Attribution; see
 ## github.com/gen2brain/h265
 
 Version v0.2.3. A pure-Go HEVC decoder and encoder. sprocket imports
-`github.com/gen2brain/h265/hevc` to decode a single keyframe.
+`github.com/gen2brain/h265/hevc` to decode a single keyframe, and only under
+the `hevc` build tag, so a build without that tag links none of it.
 
 Licensed MIT. Its `LICENSE` file, verbatim:
 

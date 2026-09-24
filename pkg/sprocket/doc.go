@@ -32,9 +32,11 @@
 // source is not supported; trimming an MP4-family file into a TS is. "MPEG-TS"
 // has the details.
 //
-// Keyframe decoding covers HEVC, VP8, and AV1, and H.264 behind the h264 build
-// tag. VP9 has no pure-Go decoder and returns ErrUnsupportedCodec. See
-// https://github.com/autobutler-org/sprocket/issues/13.
+// A default build decodes VP8 and AV1 keyframes, the royalty-free codecs. The
+// h264 build tag adds H.264 and the hevc build tag adds HEVC; -tags h264,hevc
+// builds both. VP9 has no pure-Go decoder and returns ErrUnsupportedCodec.
+// Probe, Trim, and Remux never decode, so they work for every codec whatever
+// the tags. See https://github.com/autobutler-org/sprocket/issues/13.
 //
 // # Matroska and WebM
 //
@@ -183,7 +185,8 @@
 //
 // Codecs without a decoder return ErrUnsupportedCodec, which is the signal to
 // fall back to a generic icon rather than to fail. VP9 is one of those today,
-// and so is H.264 in a build without the h264 build tag. A file with no video
+// and so are H.264 in a build without the h264 build tag and HEVC in a build
+// without the hevc build tag; the error names the tag. A file with no video
 // track returns ErrNoVideo, which is a different thing: nothing is wrong with
 // the file, it just holds no picture.
 //

@@ -1,3 +1,5 @@
+//go:build hevc
+
 package decode
 
 import (
