@@ -1,12 +1,14 @@
 package matroska
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/autobutler-org/sprocket/internal/corpus"
+	"github.com/autobutler-org/sprocket/internal/isobmff"
 )
 
 // seedCorpus adds every Matroska corpus file to a fuzz target. The files are
@@ -88,5 +90,18 @@ func FuzzParse(f *testing.F) {
 			_, _ = file.ReadSyncSample(at)
 			_, _ = file.ReadNearestSyncSample(at)
 		}
+		// Both writers read the same untrusted clusters the lookups do, and they
+		// walk every block rather than one, so they go through the same door.
+		// The fragmented one has a second set of arithmetic to get wrong: the
+		// decode timeline it derives from the block timestamps.
+		_ = Copy(io.Discard, file, isobmff.TargetMKV, nil)
+		_ = WriteFragmented(io.Discard, file, isobmff.TargetMP4, nil)
+
+		cut, _, err := file.TrimSpan(time.Second, 2*time.Second)
+		if err != nil {
+			return
+		}
+		_ = Copy(io.Discard, file, isobmff.TargetMKV, &cut)
+		_ = WriteFragmented(io.Discard, file, isobmff.TargetMP4, &cut)
 	})
 }

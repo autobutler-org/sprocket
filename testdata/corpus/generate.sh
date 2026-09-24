@@ -92,6 +92,12 @@ done
 	-c:a aac -b:a 32k "${EXACT[@]}" \
 	h264-gop12.mkv
 
+# HEVC in mkv, so that a build without the h264 tag still has a Matroska file it
+# can decode a frame out of, and so a Matroska-to-MP4 remux can be compared on a
+# codec whose configuration record is not avcC.
+"${FF[@]}" "${VIDEO[@]}" "${AUDIO[@]}" "${ENCODE[@]}" "${EXACT[@]}" \
+	-c:v libx265 -profile:v main -pix_fmt yuv420p -tag:v hvc1 hevc-aac.mkv
+
 # WebM, one file per codec the format allows. ffmpeg 9 here has no libvorbis, so the
 # Vorbis file uses the built-in encoder, which is marked experimental and so needs
 # -strict -2, and which refuses anything but stereo, hence -ac 2. It is byte-stable

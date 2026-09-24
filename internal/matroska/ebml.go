@@ -56,6 +56,7 @@ const (
 	idTrackType     = 0x83
 	idCodecID       = 0x86
 	idCodecPrivate  = 0x63A2
+	idFlagLacing    = 0x9C
 	idDefaultDur    = 0x23E383
 	idVideo         = 0xE0
 	idPixelWidth    = 0xB0

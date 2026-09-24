@@ -1,7 +1,6 @@
 package sprocket
 
 import (
-	"fmt"
 	"io"
 	"time"
 )
@@ -34,7 +33,10 @@ import (
 // away. The compatibility rules are Remux's, so a codec the target
 // cannot hold returns ErrIncompatible and CanRemux reports it ahead of time.
 // Input that is not a container this library reads returns
-// ErrUnsupportedContainer, and so does a fragmented source. A container whose
+// ErrUnsupportedContainer, and so does a fragmented source. A Matroska source
+// is cut against a window of timestamps rather than a range of sample numbers,
+// which the package documentation describes under "Trim"; writing one into the
+// MP4 family produces a fragmented file, as a remux does. A container whose
 // headers are malformed or cut short returns ErrCorrupt, and so does a file
 // whose video track declares no keyframe at all. An error from w is returned as
 // it came, so errors.Is finds the caller's own.
@@ -43,14 +45,25 @@ func Trim(r io.ReaderAt, size int64, w io.Writer, target Container, start, end t
 	if err != nil {
 		return 0, err
 	}
+
+	var (
+		c      cut
+		actual time.Duration
+	)
 	if file.mkv != nil {
-		return 0, fmt.Errorf("%w: a Matroska or WebM source cannot be trimmed yet, only read", ErrUnsupportedContainer)
+		span, at, err := file.mkv.TrimSpan(start, end)
+		if err != nil {
+			return 0, writeError(err)
+		}
+		c.span, actual = &span, at
+	} else {
+		ranges, at, err := file.mp4.TrimRanges(start, end)
+		if err != nil {
+			return 0, writeError(err)
+		}
+		c.ranges, actual = ranges, at
 	}
-	ranges, actual, err := file.mp4.TrimRanges(start, end)
-	if err != nil {
-		return 0, writeError(err)
-	}
-	if err := writeInto(w, file, target, ranges); err != nil {
+	if err := writeInto(w, file, target, c); err != nil {
 		return 0, err
 	}
 	return actual, nil

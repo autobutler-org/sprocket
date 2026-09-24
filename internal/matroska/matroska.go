@@ -133,6 +133,9 @@ type Track struct {
 	// in a frame, 1 through 4, for h264 and hevc. Zero for everything else,
 	// where a frame is the codec's own bitstream with no framing added.
 	NALLengthSize int
+	// Lacing is FlagLacing: the track's blocks may pack several frames into
+	// one. RFC 9559 section 5.1.4.1.9.
+	Lacing bool
 }
 
 // Parse reads the structure of a Matroska file. It reads the EBML header, the
@@ -386,6 +389,10 @@ func parseTrackEntry(body []byte) (*Track, error) {
 			t.CodecPrivate = child
 		case idDefaultDur:
 			t.DefaultDuration, err = readUint(child)
+		case idFlagLacing:
+			var flag uint64
+			flag, err = readUint(child)
+			t.Lacing = flag != 0
 		case idVideo:
 			err = t.parseVideo(child)
 		case idAudio:

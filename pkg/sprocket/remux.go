@@ -55,6 +55,10 @@ func CanRemux(info Info, target Container) bool {
 // moves as byte ranges through one buffer, so a multi-gigabyte source costs
 // the same heap as a small one.
 //
+// An MP4-family output written from a Matroska or WebM source is fragmented,
+// which is the only way to keep the header in front of a source that has no
+// index. See the package documentation under "Fragmented output".
+//
 // Video and audio tracks are carried over, with their sample descriptions,
 // edit lists, and display matrices copied verbatim, so the output probes and
 // thumbnails to what the input did. A timecode or subtitle track is dropped.
@@ -63,32 +67,41 @@ func CanRemux(info Info, target Container) bool {
 // reports ahead of time from the same table. Input that is not a container
 // this library reads returns ErrUnsupportedContainer, and so does a source
 // this library cannot write from: a fragmented file, whose samples are
-// described by its fragments rather than by the movie header, and a file with
-// neither a video nor an audio track. A container whose headers are malformed
-// or cut short returns ErrCorrupt. An error from w is returned as it came, so
-// errors.Is finds the caller's own.
+// described by its fragments rather than by the movie header, a Matroska file
+// with laced blocks written into the MP4 family, where a sample is one frame,
+// and a file with neither a video nor an audio track. A container whose
+// headers are malformed or cut short returns ErrCorrupt. An error from w is
+// returned as it came, so errors.Is finds the caller's own.
 func Remux(r io.ReaderAt, size int64, w io.Writer, target Container) error {
 	file, err := open(r, size)
 	if err != nil {
 		return err
 	}
-	return writeInto(w, file, target, nil)
+	return writeInto(w, file, target, cut{})
 }
 
-// writeInto writes a parsed source into the target container, cut down to
-// ranges where the caller passed any. It is the one place that pairs a source
-// family with a writer, so Remux and Trim cannot disagree about which pairs
-// exist.
-func writeInto(w io.Writer, file container, target Container, ranges map[uint32]isobmff.Range) error {
-	if file.mkv != nil {
-		return fmt.Errorf("%w: a Matroska or WebM source cannot be written into %s yet, only read",
-			ErrUnsupportedContainer, target)
-	}
-	switch out := isobmff.Target(target); out {
-	case isobmff.TargetMKV, isobmff.TargetWebM:
-		return writeError(matroska.Write(w, file.mp4, out, ranges))
+// writeInto writes a parsed source into the target container, cut down where
+// the caller passed a cut. It is the one place that pairs a source family with
+// a writer, so Remux and Trim cannot disagree about which pairs exist.
+//
+// Three of the four pairings copy samples into a header-first output. The
+// fourth, a Matroska source into the MP4 family, writes a fragmented file:
+// the source states its frames cluster by cluster and nothing before the media
+// says how many there are, so there is no index to put in front of them. See
+// the package documentation under "Fragmented output".
+func writeInto(w io.Writer, file container, target Container, c cut) error {
+	out := isobmff.Target(target)
+	matroskaTarget := out == isobmff.TargetMKV || out == isobmff.TargetWebM
+
+	switch {
+	case file.mkv != nil && matroskaTarget:
+		return writeError(matroska.Copy(w, file.mkv, out, c.span))
+	case file.mkv != nil:
+		return writeError(matroska.WriteFragmented(w, file.mkv, out, c.span))
+	case matroskaTarget:
+		return writeError(matroska.Write(w, file.mp4, out, c.ranges))
 	default:
-		return writeError(isobmff.Write(w, file.mp4, out, ranges))
+		return writeError(isobmff.Write(w, file.mp4, out, c.ranges))
 	}
 }
 
@@ -104,7 +117,8 @@ func writeError(err error) error {
 		return fmt.Errorf("%w: %w", ErrUnsupportedContainer, err)
 	case errors.Is(err, isobmff.ErrTruncated), errors.Is(err, isobmff.ErrMalformed),
 		errors.Is(err, isobmff.ErrNoSyncSample), errors.Is(err, matroska.ErrTruncated),
-		errors.Is(err, matroska.ErrMalformed):
+		errors.Is(err, matroska.ErrMalformed), errors.Is(err, matroska.ErrNoSyncSample),
+		errors.Is(err, matroska.ErrElementTooLarge), errors.Is(err, isobmff.ErrBoxTooLarge):
 		return fmt.Errorf("%w: %w", ErrCorrupt, err)
 	default:
 		return err
