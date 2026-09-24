@@ -4,8 +4,8 @@ A Go library that probes, thumbnails, trims, and remuxes video files without ffm
 
 ## Status
 
-`Probe` and `Thumbnail` work on the ISOBMFF family: mp4, mov, m4v, 3gp, and 3g2.
-Trim and Remux are not written yet, and neither is Matroska, WebM, or MPEG-TS
+`Probe`, `Thumbnail`, and `Remux` work on the ISOBMFF family: mp4, mov, m4v, 3gp,
+and 3g2. Trim is not written yet, and neither is Matroska, WebM, or MPEG-TS
 support. Work is tracked in
 [the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
 
@@ -62,6 +62,32 @@ request, breaking a tie towards the earlier one and answering a time past the en
 the file with the last keyframe. The track's rotation is applied, the planes are
 converted to RGB, and `MaxDimension` caps the longer side of the result without ever
 upscaling. `Frame.Image` is an `*image.RGBA`.
+
+```go
+if !sprocket.CanRemux(info, sprocket.MP4) {
+	return fmt.Errorf("this file holds %s, which an mp4 cannot", info.VideoCodec)
+}
+out, err := os.Create("clip.mp4")
+if err != nil {
+	return err
+}
+defer out.Close()
+
+return sprocket.Remux(file, stat.Size(), out, sprocket.MP4)
+```
+
+`Remux` moves the same streams into another container of the MP4 family without
+re-encoding. The `moov` goes in front of the payload, so the output is progressively
+playable and probing it costs a read of its head, and the payload is copied as byte
+ranges through a single buffer, so a multi-gigabyte file costs the same heap as a
+small one. Sample descriptions, edit lists, and display matrices are copied verbatim,
+so the output probes and thumbnails to what the input did.
+
+Not every stream fits every container: a MOV carrying ProRes or PCM has no valid
+representation in an MP4. `CanRemux` answers that from a `Probe` result, so a caller
+can offer only the targets that will work, and a remux that cannot happen returns
+`ErrIncompatible` naming what blocked it. Both read the same table, which the package
+documentation writes out in full.
 
 ## What it does
 

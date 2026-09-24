@@ -1,0 +1,10 @@
+{
+  "duration": 0.250000,
+  "width": 128,
+  "height": 72,
+  "video_codec": "apco",
+  "audio_codec": "sowt",
+  "bitrate": 1132640,
+  "framerate": 24,
+  "rotation": 0
+}

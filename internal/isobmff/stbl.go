@@ -59,6 +59,7 @@ func (t *Track) parseStbl(body []byte, depth int) error {
 	return walk(body, depth, func(typ string, child []byte) error {
 		switch typ {
 		case "stsd":
+			t.stsd = child
 			entry, err := parseStsd(child, t.Handler, depth+1)
 			if err != nil {
 				return err

@@ -27,6 +27,15 @@ var (
 	// ErrNoSyncSample means the video track declares no sync sample at or
 	// before the requested time.
 	ErrNoSyncSample = errors.New("isobmff: no sync sample")
+	// ErrIncompatibleCodec means a codec has no valid representation in the
+	// container it was asked to be written into. CodecTargets is the table.
+	ErrIncompatibleCodec = errors.New("isobmff: codec does not fit the target container")
+	// ErrUnsupportedSource means a parsed file is not one this package can
+	// write from: it is fragmented, or it carries no video or audio track.
+	ErrUnsupportedSource = errors.New("isobmff: cannot write from this source")
+	// ErrUnsupportedTarget means the requested Target is not one this package
+	// writes.
+	ErrUnsupportedTarget = errors.New("isobmff: unsupported target container")
 )
 
 const (

@@ -145,6 +145,12 @@ type Track struct {
 	// Entry is the track's first sample description.
 	Entry SampleEntry
 
+	// edts and stsd are those two box bodies as stored, aliasing the parsed
+	// moov. The writer copies them verbatim rather than rebuilding them, which
+	// is what keeps an edit list and a codec configuration intact through a
+	// remux whatever they carry. Both are nil when the track has none.
+	edts, stsd []byte
+
 	tables    sampleTables
 	defaults  trackDefaults
 	fragments []trackFragment
@@ -389,6 +395,7 @@ func parseTrak(body []byte, depth int) (*Track, error) {
 		case "tkhd":
 			return t.parseTkhd(child)
 		case "edts":
+			t.edts = child
 			return walk(child, depth+1, func(typ string, e []byte) error {
 				if typ == "elst" {
 					return t.parseElst(e)
