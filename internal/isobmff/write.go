@@ -7,17 +7,29 @@ import (
 	"slices"
 )
 
-// Target names a container this package can write. One writer covers all
-// three: they differ by the brands in their ftyp and by what CodecTargets lets
-// into them, not by structure.
+// Target names a container this library can write. One writer covers the three
+// ISOBMFF ones: they differ by the brands in their ftyp and by what
+// CodecTargets lets into them, not by structure. The two Matroska ones are
+// written elsewhere and are named here because CodecTargets is one table for
+// every container, and splitting it would be two places for the same answer to
+// drift apart in.
 type Target string
 
-// The containers Write produces.
+// The containers this library produces. Write produces the first three.
 const (
-	TargetMP4 Target = "mp4"
-	TargetM4V Target = "m4v"
-	Target3GP Target = "3gp"
+	TargetMP4  Target = "mp4"
+	TargetM4V  Target = "m4v"
+	Target3GP  Target = "3gp"
+	TargetMKV  Target = "mkv"
+	TargetWebM Target = "webm"
 )
+
+// targets is every container the compatibility table speaks for. A Target that
+// is not on it fits nothing.
+var targets = map[Target]bool{
+	TargetMP4: true, TargetM4V: true, Target3GP: true,
+	TargetMKV: true, TargetWebM: true,
+}
 
 // brandSet is one target's ftyp: the major brand that says what the file is,
 // and the compatible brands that say what a reader may treat it as.
@@ -52,27 +64,35 @@ var targetBrands = map[Target]brandSet{
 // alac, ac-3, and ec-3 are on the list: all three are registered for the MP4
 // family, alac through Apple's own registration and the two Dolby formats
 // through ETSI TS 102 366 Annex F.
+//
+// Matroska takes nearly everything, because its codec identifiers are an open
+// registry rather than a fixed set of sample entry codes; what is listed here
+// is what this library can name a CodecID for. WebM is the strict one: the
+// format allows VP8, VP9, and AV1 video with Vorbis or Opus audio, and nothing
+// else, which is why it has its own column rather than sharing Matroska's.
 var CodecTargets = map[string][]Target{
-	"h264": {TargetMP4, TargetM4V, Target3GP},
-	"hevc": {TargetMP4, TargetM4V, Target3GP},
-	"av1":  {TargetMP4},
-	"vp9":  {TargetMP4},
-	"aac":  {TargetMP4, TargetM4V, Target3GP},
-	"mp3":  {TargetMP4, TargetM4V},
-	"opus": {TargetMP4},
-	"alac": {TargetMP4, TargetM4V},
-	"ac-3": {TargetMP4, TargetM4V},
-	"ec-3": {TargetMP4, TargetM4V},
-	"fLaC": {TargetMP4},
-	"samr": {Target3GP},
-	"sawb": {Target3GP},
+	"h264":   {TargetMP4, TargetM4V, Target3GP, TargetMKV},
+	"hevc":   {TargetMP4, TargetM4V, Target3GP, TargetMKV},
+	"av1":    {TargetMP4, TargetMKV, TargetWebM},
+	"vp8":    {TargetMKV, TargetWebM},
+	"vp9":    {TargetMP4, TargetMKV, TargetWebM},
+	"aac":    {TargetMP4, TargetM4V, Target3GP, TargetMKV},
+	"mp3":    {TargetMP4, TargetM4V, TargetMKV},
+	"opus":   {TargetMP4, TargetMKV, TargetWebM},
+	"vorbis": {TargetMKV, TargetWebM},
+	"alac":   {TargetMP4, TargetM4V, TargetMKV},
+	"ac-3":   {TargetMP4, TargetM4V, TargetMKV},
+	"ec-3":   {TargetMP4, TargetM4V, TargetMKV},
+	"fLaC":   {TargetMP4, TargetMKV},
+	"samr":   {Target3GP},
+	"sawb":   {Target3GP},
 }
 
 // CodecFits reports whether a codec short name may be written into a target.
 // An empty codec is a track the file does not have, which blocks nothing, and
 // a target this package does not write fits nothing.
 func CodecFits(codec string, target Target) bool {
-	if _, ok := targetBrands[target]; !ok {
+	if !targets[target] {
 		return false
 	}
 	if codec == "" {
@@ -130,7 +150,7 @@ type Range struct{ First, Last uint32 }
 func Write(w io.Writer, src *File, target Target, ranges map[uint32]Range) error {
 	brands, ok := targetBrands[target]
 	if !ok {
-		return fmt.Errorf("%w: %q", ErrUnsupportedTarget, target)
+		return fmt.Errorf("%w: %q is not a container this writer produces", ErrUnsupportedTarget, target)
 	}
 	if src.Fragmented {
 		return fmt.Errorf("%w: the source is fragmented, and its samples are described by moof boxes rather than by the moov's tables", ErrUnsupportedSource)

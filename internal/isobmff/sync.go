@@ -146,7 +146,7 @@ func (f *File) readSyncSample(track *Track, found fragSample, index uint32) (Syn
 		Index:         index,
 		DecodeTime:    ticksToDuration(found.decode, track.Timescale),
 		Time:          ticksToDuration(compositionTime(found), track.Timescale),
-		MovieTime:     track.movieTime(compositionTime(found), f.Timescale),
+		MovieTime:     track.MovieTime(compositionTime(found), f.Timescale),
 		Codec:         track.Entry.Codec,
 		Config:        track.Entry.Config,
 		NALLengthSize: track.Entry.NALLengthSize,
@@ -256,4 +256,45 @@ func (f *File) fragmentSyncAfter(t *Track, index uint32) (fragSample, uint32, bo
 		}
 	}
 	return fragSample{}, 0, false, nil
+}
+
+// Sample is one sample of a track's own sample tables: when it is decoded and
+// displayed, where its bytes live, and whether it decodes on its own. It is
+// what a writer for another container family needs to lay the samples out, and
+// it holds no bytes: the payload stays on disk until something copies it.
+type Sample struct {
+	// Index is the sample's position in the track, counting from zero.
+	Index uint32
+	// Decode and Composition are the sample's decode and composition times in
+	// the track's media timescale.
+	Decode, Composition uint64
+	// Offset and Size locate the sample's bytes in the file.
+	Offset, Size int64
+	// Sync reports whether the sample is a random access point.
+	Sync bool
+}
+
+// Sample describes one sample of the track. It reads the sample tables and
+// nothing else, so it costs what the tables cost and never touches the payload.
+//
+// A fragmented track has no tables to read and reports ErrUnsupportedSource;
+// its samples are described by its moof boxes. An index past the end of the
+// track reports ErrMalformed.
+func (t *Track) Sample(index uint32) (Sample, error) {
+	if len(t.fragments) > 0 {
+		return Sample{}, fmt.Errorf("%w: track %d is fragmented", ErrUnsupportedSource, t.ID)
+	}
+	where, err := t.tables.sampleRange(index)
+	if err != nil {
+		return Sample{}, err
+	}
+	sync, ok := t.tables.syncAtOrBefore(index)
+	return Sample{
+		Index:       index,
+		Decode:      t.tables.sampleTime(index),
+		Composition: t.tables.compositionTicks(index),
+		Offset:      where.offset,
+		Size:        where.size,
+		Sync:        ok && sync == index,
+	}, nil
 }

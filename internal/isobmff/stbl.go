@@ -467,7 +467,7 @@ func (e *SampleEntry) parseEntryChildren(children []byte, depth int) error {
 		case "av1C", "vpcC", "dOps":
 			e.Config = child
 		case "esds":
-			e.ObjectType = esdsObjectType(child)
+			e.ObjectType, e.DecoderConfig = esdsDecoderConfig(child)
 		case "wave":
 			// QuickTime buries the esds of an mp4a entry in a wave box.
 			return e.parseEntryChildren(child, depth+1)
@@ -501,24 +501,28 @@ func codecName(format string, objectType byte) string {
 // Descriptor tags from the MPEG-4 object descriptor framework.
 // ISO/IEC 14496-1 7.2.2.
 const (
-	tagESDescr        = 0x03
-	tagDecoderConfig  = 0x04
-	descriptorLenMax  = 4 // a length is at most four base-128 bytes
-	esdsStreamDepend  = 0x80
-	esdsURLFlag       = 0x40
-	esdsOCRStreamFlag = 0x20
+	tagESDescr         = 0x03
+	tagDecoderConfig   = 0x04
+	tagDecoderSpecific = 0x05
+	descriptorLenMax   = 4 // a length is at most four base-128 bytes
+	esdsStreamDepend   = 0x80
+	esdsURLFlag        = 0x40
+	esdsOCRStreamFlag  = 0x20
 )
 
-// esdsObjectType pulls the objectTypeIndication out of an ES descriptor, which
-// is what distinguishes AAC from MP3 inside an mp4a entry.
-func esdsObjectType(body []byte) byte {
+// esdsDecoderConfig pulls the objectTypeIndication and the decoder specific
+// information out of an ES descriptor. The object type is what distinguishes
+// AAC from MP3 inside an mp4a entry; the decoder specific information is the
+// raw AudioSpecificConfig, which is what a Matroska file stores as an AAC
+// track's CodecPrivate.
+func esdsDecoderConfig(body []byte) (objectType byte, specific []byte) {
 	_, _, rest, ok := fullBoxVersion(body)
 	if !ok {
-		return 0
+		return 0, nil
 	}
 	tag, es, _, ok := readDescriptor(rest)
 	if !ok || tag != tagESDescr || len(es) < 3 {
-		return 0
+		return 0, nil
 	}
 	off := 3
 	flags := es[2]
@@ -527,7 +531,7 @@ func esdsObjectType(body []byte) byte {
 	}
 	if flags&esdsURLFlag != 0 {
 		if off >= len(es) {
-			return 0
+			return 0, nil
 		}
 		off += 1 + int(es[off])
 	}
@@ -535,13 +539,22 @@ func esdsObjectType(body []byte) byte {
 		off += 2
 	}
 	if off >= len(es) {
-		return 0
+		return 0, nil
 	}
 	tag, config, _, ok := readDescriptor(es[off:])
 	if !ok || tag != tagDecoderConfig || len(config) == 0 {
-		return 0
+		return 0, nil
 	}
-	return config[0]
+	// The DecoderSpecificInfo follows the thirteen fixed bytes of the decoder
+	// configuration: the object type, the stream type and buffer size, and the
+	// two bitrates. ISO/IEC 14496-1 7.2.6.6.
+	const decoderConfigHead = 13
+	if len(config) > decoderConfigHead {
+		if tag, info, _, ok := readDescriptor(config[decoderConfigHead:]); ok && tag == tagDecoderSpecific {
+			specific = info
+		}
+	}
+	return config[0], specific
 }
 
 // readDescriptor splits one tag-length-value descriptor off the front of b. The

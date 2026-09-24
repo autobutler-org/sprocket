@@ -2,9 +2,20 @@
 //
 // Keyframe is the only entry point. It takes what a container already knows
 // about a sample, dispatches on the codec short name, and returns the decoded
-// picture. HEVC and H.264 are implemented. A codec with no decoder returns
-// ErrUnsupportedCodec, which is the signal for a caller to fall back rather
-// than to fail.
+// picture. HEVC, VP8, and AV1 are implemented, and H.264 behind a build tag. A
+// codec with no decoder returns ErrUnsupportedCodec, which is the signal for a
+// caller to fall back rather than to fail. VP9 is the one codec the containers
+// this library reads can carry that has no decoder here: nothing pure Go
+// decodes it today.
+//
+// # What each decoder is given
+//
+// HEVC and H.264 split their parameter sets from their slices, so both the
+// configuration record and the sample are needed, along with the width of the
+// length prefix the container put on each NAL unit. VP8 and AV1 need neither:
+// a VP8 frame is the raw bitstream and an AV1 block is a whole temporal unit
+// that carries its own sequence header, so the sample goes in on its own. The
+// av1C record's configOBUs are not read, and prepending them changes nothing.
 //
 // Nothing is kept between calls. Each call builds a decoder, uses it once, and
 // drops it, so the only memory a caller holds afterwards is the image it asked
@@ -31,7 +42,8 @@
 // The image is an *image.YCbCr for a sequence with chroma, or an *image.Gray
 // for a monochrome one, cropped to the conformance window so that it has the
 // dimensions the stream means rather than the ones it codes. An 8-bit sequence
-// hands its planes over as they were decoded, with no conversion at all.
+// hands its planes over as they were decoded, with no conversion at all. VP8
+// codes 8-bit 4:2:0 and nothing else, so its picture needs no branching at all.
 //
 // A sequence deeper than 8 bits is shifted down to 8. That is a loss of
 // precision and nothing else: the code values are not tone mapped, so a PQ or
@@ -67,10 +79,14 @@
 // is the image handed back. Six sequential decodes in one process stay at 93
 // to 101 ms each and peak at 80 MiB.
 //
+// One 3840x2160 8-bit AV1 keyframe from a 159 KB sample, measured the same way:
+// 36 to 38 ms and 32 to 33 MiB of peak resident memory.
+//
 // A picture is refused before a plane is allocated for it if the sequence
 // declares more luma samples than maxLumaSamples, which is the largest picture
-// any HEVC level allows. Both codecs take that bound, the H.264 one counted in
-// macroblocks.
+// any HEVC level allows. Every codec takes that bound: the H.264 one counted in
+// macroblocks, the AV1 one through the decoder's own frame size limit, and the
+// VP8 one from the frame header, which is read before the frame is.
 package decode
 
 import (
@@ -132,6 +148,10 @@ func Keyframe(codec string, config []byte, nalLengthSize int, sample []byte) (im
 		return hevcKeyframe(config, nalLengthSize, sample)
 	case "h264":
 		return h264Keyframe(config, nalLengthSize, sample)
+	case "vp8":
+		return vp8Keyframe(sample)
+	case "av1":
+		return av1Keyframe(sample)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnsupportedCodec, codec)
 	}

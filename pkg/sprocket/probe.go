@@ -2,11 +2,11 @@ package sprocket
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"time"
 
 	"github.com/autobutler-org/sprocket/internal/isobmff"
+	"github.com/autobutler-org/sprocket/internal/matroska"
 )
 
 // Sentinel errors. Every error this package returns wraps one of these, so a
@@ -73,11 +73,24 @@ type Info struct {
 // not, so a file whose payload was dropped whole probes successfully. Detecting
 // that would mean reading the payload, which is the cost Probe exists to avoid.
 func Probe(r io.ReaderAt, size int64) (Info, error) {
-	file, err := isobmff.Parse(r, size)
+	file, err := open(r, size)
 	if err != nil {
-		return Info{}, containerError(err)
+		return Info{}, err
 	}
 
+	var info Info
+	if file.mp4 != nil {
+		info = probeISOBMFF(file.mp4)
+	} else {
+		info = probeMatroska(file.mkv)
+	}
+	if seconds := info.Duration.Seconds(); seconds > 0 {
+		info.Bitrate = int(float64(size) * 8 / seconds)
+	}
+	return info, nil
+}
+
+func probeISOBMFF(file *isobmff.File) Info {
 	info := Info{Duration: file.Duration()}
 	if video := file.VideoTrack(); video != nil {
 		info.Width = int(video.Width)
@@ -89,21 +102,22 @@ func Probe(r io.ReaderAt, size int64) (Info, error) {
 	if audio := file.AudioTrack(); audio != nil {
 		info.AudioCodec = audio.Entry.Codec
 	}
-	if seconds := info.Duration.Seconds(); seconds > 0 {
-		info.Bitrate = int(float64(size) * 8 / seconds)
-	}
-	return info, nil
+	return info
 }
 
-// containerError maps a demuxer error onto this package's sentinels. The
-// demuxer's own sentinel stays in the chain, so errors.Is finds either one.
-func containerError(err error) error {
-	switch {
-	case errors.Is(err, isobmff.ErrNotISOBMFF):
-		return fmt.Errorf("%w: %w", ErrUnsupportedContainer, err)
-	case errors.Is(err, isobmff.ErrNoVideoTrack):
-		return fmt.Errorf("%w: %w", ErrNoVideo, err)
-	default:
-		return fmt.Errorf("%w: %w", ErrCorrupt, err)
+// probeMatroska is the same answer from the other family. Rotation is left at
+// zero because Matroska carries no display matrix, which the package
+// documentation says under "Matroska and WebM".
+func probeMatroska(file *matroska.File) Info {
+	info := Info{Duration: file.Duration()}
+	if video := file.VideoTrack(); video != nil {
+		info.Width = video.Width
+		info.Height = video.Height
+		info.VideoCodec = video.Codec
+		info.FrameRate = file.FrameRate()
 	}
+	if audio := file.AudioTrack(); audio != nil {
+		info.AudioCodec = audio.Codec
+	}
+	return info
 }

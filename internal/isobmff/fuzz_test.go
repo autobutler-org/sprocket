@@ -16,7 +16,7 @@ import (
 func seedCorpus(f *testing.F) {
 	f.Helper()
 
-	names, err := corpus.Files()
+	names, err := corpus.ISOBMFFFiles()
 	if err != nil {
 		f.Fatalf("list corpus: %v", err)
 	}

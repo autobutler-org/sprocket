@@ -4,4 +4,8 @@ go 1.26.6
 
 require github.com/gen2brain/h265 v0.2.3
 
-require github.com/rcarmo/go-264 v0.0.0-20260918175710-241fd4164612
+require (
+	github.com/gen2brain/gav1d v0.2.5
+	github.com/rcarmo/go-264 v0.0.0-20260918175710-241fd4164612
+	golang.org/x/image v0.46.0
+)

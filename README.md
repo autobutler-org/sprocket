@@ -5,10 +5,13 @@ A Go library that probes, thumbnails, trims, and remuxes video files without ffm
 ## Status
 
 All four operations work on the ISOBMFF family: mp4, mov, m4v, 3gp, and 3g2.
-Matroska, WebM, and MPEG-TS are not supported yet. Work is tracked in
+Matroska and WebM are read by all four and written by Remux and Trim; a
+Matroska source cannot yet be written back out into an mp4, which returns the
+unsupported-container error. MPEG-TS is not supported at all. Work is tracked in
 [the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
 
-Keyframe decoding covers HEVC, and H.264 behind the `h264` build tag. The tag is
+Keyframe decoding covers HEVC, VP8, and AV1, and H.264 behind the `h264` build
+tag. VP9 has no pure-Go decoder and returns the unsupported-codec error. The tag is
 there because H.264 is patent encumbered: Via LA's active AVC list still holds a
 patent mapped to core decoding that runs to November 2030 in the US, so opting in
 is a decision to take deliberately rather than one that arrives with `go get`.
@@ -129,8 +132,8 @@ timestamps, offsets. The bulk of ffmpeg is codecs, and this library re-encodes
 nothing, so it needs no encoder and needs a decoder for one purpose only.
 
 Planned container support, in priority order: the ISOBMFF family (mp4, mov, m4v, 3gp,
-3g2), then Matroska and WebM, then MPEG-TS. Keyframe decoding covers HEVC and, behind
-the `h264` build tag, H.264. VP9 has no known pure-Go path and returns the
+3g2), then Matroska and WebM, then MPEG-TS. Keyframe decoding covers HEVC, VP8, AV1
+and, behind the `h264` build tag, H.264. VP9 has no known pure-Go path and returns the
 unsupported-codec error.
 
 ## What it does not do

@@ -110,6 +110,104 @@ own MIT notice. Those are fixtures in the module's own tests, not code.
 The video decoder is presented as the author's own work, with no upstream
 attributed to it, and the module ships no patent notice of any kind.
 
+## golang.org/x/image
+
+Version v0.46.0. The Go project's supplemental image packages. sprocket imports
+`golang.org/x/image/vp8` to decode a single VP8 keyframe. It is pure Go, has no
+dependencies of its own, and is maintained by the Go team.
+
+Licensed BSD 3-Clause. Its `LICENSE` file, verbatim:
+
+```
+Copyright 2009 The Go Authors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google LLC nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### Work it came from
+
+The `vp8` package is the Go project's own work. The module carries a `PATENTS`
+file, which is the Go project's standard patent grant, and vendors no
+third-party source tree.
+
+## github.com/gen2brain/gav1d
+
+Version v0.2.5. A pure-Go AV1 decoder and encoder. sprocket imports
+`github.com/gen2brain/gav1d/av1` to decode a single keyframe. It is cgo-free:
+its SIMD is hand-written Go assembly for amd64, arm64, and riscv64, chosen at
+run time, and a `noasm` build tag leaves pure Go everywhere. `CGO_ENABLED=0`
+builds of sprocket for linux/arm64 and darwin/arm64 link it cleanly.
+
+Licensed BSD 2-Clause. Its license file is named `COPYING`, not `LICENSE`, and
+reads verbatim:
+
+```
+Copyright © 2018-2025, VideoLAN and dav1d authors
+Copyright (c) 2016, Alliance for Open Media
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### Work it came from
+
+The two copyright lines above are the attribution. The decoder is a port of
+[dav1d](https://code.videolan.org/videolan/dav1d), VideoLAN's AV1 decoder, which
+carries the first line; the encoder's forward transform is a port of
+[libaom](https://aomedia.googlesource.com/aom/), which carries the second.
+sprocket imports the decoder only. Both upstream projects are BSD 2-Clause, and
+the module vendors no source tree of its own: it is `COPYING`, `PATENTS`,
+`README.md`, `go.mod`, and the `av1` and `avif` packages, with no bundled
+binary or WASM module.
+
+The module also carries a `PATENTS` file, which is the Alliance for Open Media
+Patent License 1.0. That is a grant rather than a disclaimer, and it is the
+same one every AV1 implementation ships. The README states: "This project is an
+implementation of a codec. It gives you no special rights on the AV1 patents."
+
 ## Patents
 
 `gen2brain/h265`'s README says, in its own words:

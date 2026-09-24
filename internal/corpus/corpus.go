@@ -31,6 +31,14 @@ type Golden struct {
 // to its media files.
 var notMedia = []string{".json", ".md", ".sh"}
 
+// The extensions of each container family the corpus holds. A test of one
+// family's parser asks for its own files rather than skipping the others by
+// hand.
+var (
+	isobmffExtensions  = []string{".mp4", ".mov"}
+	matroskaExtensions = []string{".mkv", ".webm"}
+)
+
 // Dir returns the corpus directory. It is resolved from this file's own path, so
 // it does not depend on the working directory of the test that calls it.
 func Dir() string {
@@ -55,12 +63,34 @@ func Files() ([]string, error) {
 	return names, nil
 }
 
-// Open opens the named corpus media file and loads its golden probe result. The
-// caller closes the file.
+// ISOBMFFFiles returns the names of the MP4 family files in the corpus, sorted.
+func ISOBMFFFiles() ([]string, error) { return filesWithExtension(isobmffExtensions) }
+
+// MatroskaFiles returns the names of the Matroska family files in the corpus,
+// sorted.
+func MatroskaFiles() ([]string, error) { return filesWithExtension(matroskaExtensions) }
+
+func filesWithExtension(extensions []string) ([]string, error) {
+	names, err := Files()
+	if err != nil {
+		return nil, err
+	}
+	kept := names[:0]
+	for _, name := range names {
+		if slices.Contains(extensions, filepath.Ext(name)) {
+			kept = append(kept, name)
+		}
+	}
+	return kept, nil
+}
+
+// Open opens the named corpus media file and loads its golden probe result,
+// which is committed next to it under the same name plus ".json". The caller
+// closes the file.
 func Open(name string) (*os.File, Golden, error) {
 	var golden Golden
 
-	raw, err := os.ReadFile(filepath.Join(Dir(), goldenName(name)))
+	raw, err := os.ReadFile(filepath.Join(Dir(), name+".json"))
 	if err != nil {
 		return nil, golden, fmt.Errorf("read golden for %s: %w", name, err)
 	}
@@ -73,9 +103,4 @@ func Open(name string) (*os.File, Golden, error) {
 		return nil, golden, fmt.Errorf("open corpus file: %w", err)
 	}
 	return file, golden, nil
-}
-
-// goldenName maps a media file name to the name of its golden JSON.
-func goldenName(media string) string {
-	return media[:len(media)-len(filepath.Ext(media))] + ".json"
 }

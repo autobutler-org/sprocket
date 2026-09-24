@@ -22,9 +22,52 @@
 // # Status
 //
 // All four operations are implemented for the ISOBMFF family: mp4, mov, m4v,
-// 3gp, and 3g2. Keyframe decoding covers HEVC, and H.264 behind the h264 build
-// tag. Matroska, WebM, and MPEG-TS are not supported yet. See
+// 3gp, and 3g2.
+//
+// Matroska and WebM are read by all four operations, and Remux and Trim write
+// them. What is missing is the other direction: a Matroska or WebM source
+// cannot yet be written back out into an mp4, and Remux and Trim return
+// ErrUnsupportedContainer for one. Probe and Thumbnail read them like anything
+// else. MPEG-TS is not supported at all.
+//
+// Keyframe decoding covers HEVC, VP8, and AV1, and H.264 behind the h264 build
+// tag. VP9 has no pure-Go decoder and returns ErrUnsupportedCodec. See
 // https://github.com/autobutler-org/sprocket/issues/13.
+//
+// # Matroska and WebM
+//
+// One parser and one writer cover both, which differ by the document type in
+// their header and by what codecs they are allowed to carry. Three things about
+// the family are worth knowing before reading a result from one.
+//
+// Rotation is always 0. Matroska has no display matrix, so there is nothing for
+// the container to say about orientation and this library does not guess. The
+// Projection element can express a roll, but it belongs to the spherical video
+// signaling rather than to the orientation flag a phone writes, and nothing
+// outside 360 degree video sets it, so it is not read.
+//
+// Frame rate comes from what the file declares where it declares anything.
+// Matroska has no sample table, so there is no count of frames to divide by the
+// duration without reading the whole file. A track that states a
+// DefaultDuration, which every muxer writes, reports the rate that implies,
+// which is nominal rather than measured: a variable-framerate file is described
+// by whatever its muxer nominated. A track that states none is measured by
+// counting the blocks across the file, which costs a walk of the cluster
+// headers when the file is opened and is bounded to about four hours of
+// one-second clusters.
+//
+// Duration is what the file declares and nothing else. The ISOBMFF side falls
+// back to its longest track where the movie header says zero; there is no
+// equivalent here short of reading to the last block, so a Matroska file that
+// declares no duration reports zero, and with it a bitrate and a measured frame
+// rate of zero.
+//
+// Writing one is single-pass. The segment declares an unknown size and the seek
+// index goes at the end, both of which the format allows, so the header can go
+// out before anything after it is known. Each cluster does declare its size,
+// which costs holding one cluster's block descriptors, a few thousand at most
+// and no payload, while it is measured. Clusters run about a second and begin
+// on a keyframe where there is one to begin on.
 //
 // # Thumbnails
 //
@@ -133,12 +176,14 @@
 // for.
 //
 // A fragmented source is not trimmed, for the reason Remux is not: its samples
-// are described by its moof boxes rather than by the movie header.
+// are described by its moof boxes rather than by the movie header. Neither is a
+// Matroska or WebM source, for the reason Remux does not remux one: there is no
+// writer that takes one yet.
 //
 // # Remux
 //
-// Remux moves the streams of an MP4-family file into another container of the
-// same family: mp4, m4v, or 3gp. Nothing is decoded and nothing is re-encoded.
+// Remux moves the streams of an MP4-family file into another container: mp4,
+// m4v, 3gp, mkv, or webm. Nothing is decoded and nothing is re-encoded.
 // The sample payload is copied verbatim as byte ranges, and the sample
 // descriptions, edit lists, and display matrices are copied verbatim too, so
 // the output probes and thumbnails to what the input did. Only video and audio
@@ -156,6 +201,20 @@
 // the video and the audio. Interleaving is the upgrade, and it changes nothing
 // a caller can see.
 //
+// Writing a Matroska or WebM output takes the same route: the samples are
+// copied as byte ranges out of the source and the codec configuration records
+// are carried across, either verbatim, since Matroska adopted the same records
+// the MP4 family uses, or converted where the two families store the same
+// fields differently. AAC is one of those: Matroska stores the raw
+// AudioSpecificConfig, which lives inside the source's esds. Opus is the other:
+// Matroska stores the identification header whose body a dOps box holds.
+//
+// A Matroska or WebM source is not remuxed yet, in either direction, and
+// returns ErrUnsupportedContainer. Its samples are described by its clusters
+// rather than by an up-front index, so an MP4 written from one cannot place its
+// header first from a single pass, and the fragmented output that would solve
+// that is not written yet.
+//
 // A fragmented source is not remuxed. Its samples are described by its moof
 // boxes rather than by the movie header, and the writer builds its output from
 // the movie header, so a fragmented input returns ErrUnsupportedContainer.
@@ -169,23 +228,36 @@
 // caller is given ahead of time and the answer a remux acts on cannot drift.
 //
 //	codec   containers it may be written into
-//	h264    mp4, m4v, 3gp
-//	hevc    mp4, m4v, 3gp
-//	av1     mp4
-//	vp9     mp4
-//	aac     mp4, m4v, 3gp
-//	mp3     mp4, m4v
-//	opus    mp4
-//	alac    mp4, m4v
-//	ac-3    mp4, m4v
-//	ec-3    mp4, m4v
-//	fLaC    mp4
+//	h264    mp4, m4v, 3gp, mkv
+//	hevc    mp4, m4v, 3gp, mkv
+//	av1     mp4, mkv, webm
+//	vp8     mkv, webm
+//	vp9     mp4, mkv, webm
+//	aac     mp4, m4v, 3gp, mkv
+//	mp3     mp4, m4v, mkv
+//	opus    mp4, mkv, webm
+//	vorbis  mkv, webm
+//	alac    mp4, m4v, mkv
+//	ac-3    mp4, m4v, mkv
+//	ec-3    mp4, m4v, mkv
+//	fLaC    mp4, mkv
 //	samr    3gp
 //	sawb    3gp
 //
 // alac, ac-3, and ec-3 are on the list because all three are registered for
 // the MP4 family: alac through Apple's own registration, and the two Dolby
 // formats through ETSI TS 102 366 Annex F.
+//
+// Matroska takes nearly everything, because its codec identifiers are an open
+// registry rather than a fixed set of four-character codes. WebM is the strict
+// one: the format allows VP8, VP9, and AV1 video with Vorbis or Opus audio and
+// nothing else, so an H.264 file returns ErrIncompatible for it.
+//
+// The table speaks for the codecs and not for the source. A pairing it allows
+// can still fail at Remux for a reason that is not about the codec: a
+// fragmented source, a Matroska source, or a source whose codec configuration
+// this library cannot translate into the target's own form. Those return
+// ErrUnsupportedContainer naming what stopped them.
 //
 // What the table refuses, and why it is worth naming, is what a MOV can carry
 // and an MP4 cannot: ProRes, stored as apch, apcn, apcs, apco, or ap4h, and
@@ -200,12 +272,13 @@
 // Codec names are lowercase short names. They are part of the public contract
 // and callers may switch on them:
 //
-//	h264, hevc, av1, vp8, vp9, aac, mp3, opus
+//	h264, hevc, av1, vp8, vp9, aac, mp3, opus, vorbis
 //
 // Anything else comes through as its four-character sample entry code exactly as
-// the file stores it, case included: "ac-3", "ec-3", "fLaC", "alac". Those are
-// readable enough to log or to match on, but they are not yet promised to stay
-// as they are; the eight names above are. The list grows as containers and
+// the file stores it, case included: "ac-3", "ec-3", "fLaC", "alac". A Matroska
+// file with a codec off the list reports its CodecID string instead, such as
+// "V_QUICKTIME". Those are readable enough to log or to match on, but they are
+// not yet promised to stay as they are; the nine names above are. The list grows as containers and
 // codecs are added, and a name on it never changes meaning.
 //
 // # Bitrate
@@ -222,9 +295,13 @@
 //
 // # Frame rate
 //
-// Info.FrameRate is an average: the video track's sample count over its media
-// duration, taken from the sample tables. A variable-framerate file therefore
-// reports the rate it actually ran at rather than a nominal one, and a file
-// whose nominal rate is a lie reports the truth. It is 0 when there is no video
-// track, no video sample, or no duration.
+// Info.FrameRate is an average for an ISOBMFF file: the video track's sample
+// count over its media duration, taken from the sample tables. A
+// variable-framerate file therefore reports the rate it actually ran at rather
+// than a nominal one, and a file whose nominal rate is a lie reports the truth.
+// It is 0 when there is no video track, no video sample, or no duration.
+//
+// A Matroska or WebM file has no sample table, so the rule there is the one
+// "Matroska and WebM" describes: the declared DefaultDuration where the track
+// states one, and a measured count of blocks where it does not.
 package sprocket
