@@ -130,20 +130,40 @@ func Write(w io.Writer, src *isobmff.File, target isobmff.Target, ranges map[uin
 	return writeAll(out, cuesElement(cues))
 }
 
-// outTrack is one output track: which source track it came from, the span of
-// its samples the output holds, and the cursor the interleave walks it with.
+// outTrack is one output track: everything its TrackEntry declares, and, for a
+// source that has one, the sample cursor the interleave walks it with.
+//
+// The description is held as the fields Matroska itself stores rather than as a
+// source track, because two families feed this writer: an ISOBMFF file, whose
+// samples the interleave below pulls, and another Matroska file, whose blocks
+// are copied across as they stand.
 type outTrack struct {
-	src *isobmff.Track
 	// number is the TrackNumber the output gives it, counting from one.
 	number uint64
+	// typ is the TrackType: trackVideo or trackAudio.
+	typ uint64
 	// codecID and codecPrivate are what the TrackEntry declares.
 	codecID      string
 	codecPrivate []byte
-	// first and last are the source sample indexes the output keeps.
+	// defaultDuration is the nominal nanoseconds per frame, or 0 when there is
+	// nothing to declare.
+	defaultDuration uint64
+	// width and height describe a video track, sampleRate and channels an audio
+	// one.
+	width, height uint64
+	sampleRate    float64
+	channels      uint64
+	// lacing is the FlagLacing the output declares, set for a track whose
+	// blocks may pack several frames into one.
+	lacing bool
+
+	// src is the ISOBMFF track the samples come from, nil for a Matroska
+	// source. first and last are the source sample indexes the output keeps,
+	// and origin is subtracted from every timestamp so that a cut starts at
+	// zero.
+	src         *isobmff.Track
 	first, last uint32
-	// origin is subtracted from every timestamp, so that a cut output starts at
-	// zero. It is zero for a track written whole.
-	origin time.Duration
+	origin      time.Duration
 
 	// next is the interleave cursor: the sample this track offers next.
 	next uint32
@@ -173,8 +193,14 @@ func outputTracks(src *isobmff.File, target isobmff.Target, ranges map[uint32]is
 		}
 
 		entry := &outTrack{
-			src: t, number: uint64(len(out) + 1), codecID: codecID, codecPrivate: private,
-			last: t.SampleCount() - 1,
+			number: uint64(len(out) + 1), typ: trackTypeOf(t.Handler),
+			codecID: codecID, codecPrivate: private,
+			width: uint64(t.Width), height: uint64(t.Height),
+			sampleRate: float64(t.Entry.SampleRate), channels: uint64(max(t.Entry.ChannelCount, 1)),
+			src: t, last: t.SampleCount() - 1,
+		}
+		if rate := t.FrameRate(); t.Handler == "vide" && rate > 0 {
+			entry.defaultDuration = uint64(float64(time.Second) / rate)
 		}
 		if span, cut := ranges[t.ID]; cut {
 			if span.Last < span.First || span.Last >= t.SampleCount() {
@@ -344,24 +370,27 @@ func (d *docWriter) trackEntry(t *outTrack) {
 	start := d.open(idTrackEntry)
 	d.integer(idTrackNumber, t.number)
 	d.integer(0x73C5, t.number) // TrackUID
-	d.integer(idTrackType, trackTypeOf(t.src.Handler))
-	d.integer(0x9C, 0) // FlagLacing, off: this writer packs one frame per block
+	d.integer(idTrackType, t.typ)
+	// FlagLacing says whether a reader should expect laced blocks. This writer
+	// packs one frame per block from an ISOBMFF source, but a block copied out
+	// of another Matroska file may be laced, so the flag follows the track.
+	d.integer(0x9C, boolean(t.lacing))
 	d.text(idCodecID, t.codecID)
 	if len(t.codecPrivate) > 0 {
 		d.binary(idCodecPrivate, t.codecPrivate)
 	}
-	if rate := t.src.FrameRate(); t.src.Handler == "vide" && rate > 0 {
-		d.integer(idDefaultDur, uint64(float64(time.Second)/rate))
+	if t.defaultDuration > 0 {
+		d.integer(idDefaultDur, t.defaultDuration)
 	}
-	if t.src.Handler == "vide" {
+	if t.typ == trackVideo {
 		video := d.open(idVideo)
-		d.integer(idPixelWidth, uint64(t.src.Width))
-		d.integer(idPixelHeight, uint64(t.src.Height))
+		d.integer(idPixelWidth, t.width)
+		d.integer(idPixelHeight, t.height)
 		d.close(video)
 	} else {
 		audio := d.open(idAudio)
-		d.float(idSamplingFreq, float64(t.src.Entry.SampleRate))
-		d.integer(idChannels, uint64(max(t.src.Entry.ChannelCount, 1)))
+		d.float(idSamplingFreq, t.sampleRate)
+		d.integer(idChannels, max(t.channels, 1))
 		d.close(audio)
 	}
 	d.close(start)
@@ -380,8 +409,12 @@ type outBlock struct {
 	track    uint64
 	ticks    int64
 	keyframe bool
-	offset   int64
-	size     int64
+	// flags is the block's own flags byte, which carries the keyframe bit and
+	// the lacing mode. A block copied out of another Matroska file keeps the
+	// source's, so that its lacing survives.
+	flags  byte
+	offset int64
+	size   int64
 }
 
 // cuePoint is one entry of the seek index, accumulated as the clusters go out.
@@ -438,8 +471,12 @@ func writeClusters(out *countingWriter, src *isobmff.File, tracks []*outTrack, s
 				break
 			}
 			clusterTicks = min(clusterTicks, ticks)
+			var flags byte
+			if next.sample.Sync {
+				flags = blockKeyframeFlag
+			}
 			blocks = append(blocks, outBlock{
-				track: next.track.number, ticks: ticks, keyframe: next.sample.Sync,
+				track: next.track.number, ticks: ticks, keyframe: next.sample.Sync, flags: flags,
 				offset: next.sample.Offset, size: next.sample.Size,
 			})
 		}
@@ -447,7 +484,7 @@ func writeClusters(out *countingWriter, src *isobmff.File, tracks []*outTrack, s
 			return cues, nil
 		}
 
-		at, err := writeCluster(out, src, blocks, clusterTicks, buffer)
+		at, err := writeCluster(out, src.ReaderAt(), blocks, clusterTicks, buffer)
 		if err != nil {
 			return nil, err
 		}
@@ -487,7 +524,7 @@ type clusterLayout struct {
 // header and a copy of the frame for each block. The payload moves as byte
 // ranges through the caller's buffer, so a cluster costs its descriptors and
 // nothing per byte of media.
-func writeCluster(out *countingWriter, src *isobmff.File, blocks []outBlock, clusterTicks int64, buffer []byte) (clusterLayout, error) {
+func writeCluster(out *countingWriter, reader io.ReaderAt, blocks []outBlock, clusterTicks int64, buffer []byte) (clusterLayout, error) {
 	timestamp := integerElement(idTimestamp, uint64(max(clusterTicks, 0)))
 
 	payload := int64(len(timestamp))
@@ -501,7 +538,6 @@ func writeCluster(out *countingWriter, src *isobmff.File, blocks []outBlock, clu
 	}
 	start := out.written - int64(len(timestamp))
 
-	reader := src.ReaderAt()
 	for i, b := range blocks {
 		at.blocks[i] = out.written - start
 		if err := writeAll(out, blockHeader(b, clusterTicks)); err != nil {
@@ -526,12 +562,8 @@ func blockElementSize(b outBlock) int64 {
 // blockHeader builds a SimpleBlock's element header and the block header inside
 // it: the track number, the timestamp relative to the cluster, and the flags.
 func blockHeader(b outBlock, clusterTicks int64) []byte {
-	var flags byte
-	if b.keyframe {
-		flags = blockKeyframeFlag
-	}
 	offset := uint16(b.ticks - clusterTicks)
-	inner := append(trackNumberVint(b.track), byte(offset>>8), byte(offset), flags)
+	inner := append(trackNumberVint(b.track), byte(offset>>8), byte(offset), b.flags)
 	return append(elementHeader(idSimpleBlock, int64(len(inner))+b.size), inner...)
 }
 
@@ -604,11 +636,19 @@ func nextSample(tracks []*outTrack, movieTimescale uint32) (*pendingSample, erro
 
 func videoTrackOf(tracks []*outTrack) *outTrack {
 	for _, t := range tracks {
-		if t.src.Handler == "vide" {
+		if t.typ == trackVideo {
 			return t
 		}
 	}
 	return nil
+}
+
+// boolean is an EBML flag as an integer element holds it.
+func boolean(set bool) uint64 {
+	if set {
+		return 1
+	}
+	return 0
 }
 
 // tickDuration is one output tick in wall time.

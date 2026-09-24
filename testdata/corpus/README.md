@@ -9,8 +9,8 @@ file is distinguishable from its stored dimensions. Three files are exceptions:
 `prores-pcm.mov` is a quarter of a second, because ProRes is an intra codec and costs
 orders of magnitude more per frame than the rest, and `h264-gop12.mp4` and
 `h264-gop12.mkv` are three seconds, because a trim needs room for more than one
-keyframe. The sixteen media files total 369,832 bytes; the directory including the
-goldens and the script is 472 KB on disk.
+keyframe. The seventeen media files total 387,632 bytes; the directory including the
+goldens and the script is 496 KB on disk.
 
 ## Files
 
@@ -29,6 +29,7 @@ goldens and the script is 472 KB on disk.
 | `prores-pcm.mov` | ProRes proxy + 16-bit PCM in mov: the pair no mp4 can hold, which the remux compatibility table has to refuse |
 | `h264-aac.mkv` | H.264 + AAC in Matroska, the same bitstreams `h264-aac.mp4` carries, so a remux between the two families can be compared against a source that differs only in its container |
 | `h264-gop12.mkv` | the Matroska twin of `h264-gop12.mp4`: three seconds with a keyframe every twelve frames, so the `Cues` index holds more than one entry |
+| `hevc-aac.mkv` | HEVC + AAC in Matroska: a codec whose configuration record is not `avcC`, and the one Matroska file a build without the `h264` tag can decode a frame out of |
 | `vp8-vorbis.webm` | VP8 + Vorbis in WebM |
 | `vp9-opus.webm` | VP9 + Opus in WebM: the video codec with no decoder here, which has to probe correctly and return the typed unsupported-codec error from the thumbnail path |
 | `av1-opus.webm` | AV1 + Opus in WebM |

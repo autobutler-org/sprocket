@@ -38,6 +38,14 @@ type block struct {
 	// first is the first frame's bytes in the file. A block with no lacing
 	// carries exactly one frame, and this is it.
 	first span
+	// flags is the block's own flags byte, keyframe bit and lacing mode
+	// included. A writer copying the block across keeps it as it stands.
+	flags byte
+	// body is everything after the flags byte: the lacing table, where there is
+	// one, and the frames. It is what a Matroska-to-Matroska copy moves
+	// verbatim, which is how a laced block survives the trip without being
+	// taken apart.
+	body span
 }
 
 // eachBlock calls fn for every block in one cluster, reading block headers and
@@ -109,7 +117,13 @@ func (f *File) readBlockGroup(group span, clusterTicks int64) (block, bool, erro
 	if err != nil {
 		return block{}, false, err
 	}
+	// A Block inside a group carries no keyframe bit; the absence of a
+	// ReferenceBlock is what says so. Folding the answer into the flags lets a
+	// writer emit the block as a SimpleBlock without working it out again.
 	b.keyframe = !referenced
+	if b.keyframe {
+		b.flags |= blockKeyframeFlag
+	}
 	return b, true, nil
 }
 
@@ -157,6 +171,8 @@ func parseBlockHeader(head []byte, at span, clusterTicks int64, simple bool) (bl
 		keyframe: simple && flags&blockKeyframeFlag != 0,
 		frames:   1,
 		first:    body,
+		flags:    flags,
+		body:     body,
 	}
 	if lacing := (flags >> 1) & 0x03; lacing != lacingNone {
 		if err := b.applyLacing(head[n+3:], body, lacing); err != nil {

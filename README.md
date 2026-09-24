@@ -4,10 +4,16 @@ A Go library that probes, thumbnails, trims, and remuxes video files without ffm
 
 ## Status
 
-All four operations work on the ISOBMFF family: mp4, mov, m4v, 3gp, and 3g2.
-Matroska and WebM are read by all four and written by Remux and Trim; a
-Matroska source cannot yet be written back out into an mp4, which returns the
-unsupported-container error. MPEG-TS is not supported at all. Work is tracked in
+All four operations work on the ISOBMFF family: mp4, mov, m4v, 3gp, and 3g2, and
+on Matroska and WebM, in both directions. An mp4 goes into an mkv or a webm, and
+an mkv or a webm goes into an mp4, an m4v, or a 3gp. That last direction writes a
+**fragmented** MP4: Matroska has no up-front index, so nothing before the media
+says how many frames a track holds or how large each one is, and a `moov` cannot
+be placed in front of the payload from a single pass. One `moof` and one `mdat`
+per source cluster needs no index and costs a cluster's block headers. See
+`Fragmented output` in the package documentation for what that means for the
+decode times and the edit list the writer has to derive. MPEG-TS is not supported
+at all. Work is tracked in
 [the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
 
 Keyframe decoding covers HEVC, VP8, and AV1, and H.264 behind the `h264` build

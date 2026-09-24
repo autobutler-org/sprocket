@@ -24,11 +24,10 @@
 // All four operations are implemented for the ISOBMFF family: mp4, mov, m4v,
 // 3gp, and 3g2.
 //
-// Matroska and WebM are read by all four operations, and Remux and Trim write
-// them. What is missing is the other direction: a Matroska or WebM source
-// cannot yet be written back out into an mp4, and Remux and Trim return
-// ErrUnsupportedContainer for one. Probe and Thumbnail read them like anything
-// else. MPEG-TS is not supported at all.
+// So are Matroska and WebM, in both directions. An MP4-family file goes into an
+// mkv or a webm, and a Matroska or WebM file goes into an mp4, an m4v, or a 3gp,
+// where the output is fragmented for the reason "Fragmented output" gives.
+// MPEG-TS is not supported at all.
 //
 // Keyframe decoding covers HEVC, VP8, and AV1, and H.264 behind the h264 build
 // tag. VP9 has no pure-Go decoder and returns ErrUnsupportedCodec. See
@@ -36,9 +35,9 @@
 //
 // # Matroska and WebM
 //
-// One parser and one writer cover both, which differ by the document type in
-// their header and by what codecs they are allowed to carry. Three things about
-// the family are worth knowing before reading a result from one.
+// One parser covers both, and so does the writer: they differ by the document
+// type in their header and by what codecs they are allowed to carry. Three
+// things about the family are worth knowing before reading a result from one.
 //
 // Rotation is always 0. Matroska has no display matrix, so there is nothing for
 // the container to say about orientation and this library does not guess. The
@@ -107,9 +106,10 @@
 //
 // # Trim
 //
-// Trim cuts a range out of a file and writes it as a file of the same family,
-// copying the samples across as byte ranges. Nothing is decoded and nothing is
-// re-encoded, which is what fixes where a cut can begin.
+// Trim cuts a range out of a file and writes it as a file of any container
+// Remux can write, copying the samples across as byte ranges. Nothing is
+// decoded and nothing is re-encoded, which is what fixes where a cut can
+// begin.
 //
 // The start snaps back to the keyframe at or before it. Frames between two
 // keyframes are coded against their neighbours, so a cut that began between
@@ -175,25 +175,34 @@
 // duration, which is the samples it kept rather than the window that was asked
 // for.
 //
-// A fragmented source is not trimmed, for the reason Remux is not: its samples
-// are described by its moof boxes rather than by the movie header. Neither is a
-// Matroska or WebM source, for the reason Remux does not remux one: there is no
-// writer that takes one yet.
+// A Matroska source is cut the same way, against a window of timestamps rather
+// than a range of sample numbers, since a file with no sample table has no
+// sample numbers to name. The start snaps back to the keyframe the Cues index
+// or a cluster walk finds at or before it, every other track begins at its own
+// last block at or before that, and each track is rebased onto its own first
+// block, so every track begins at zero with the same one-frame residual the
+// MP4 family has. Writing one into the MP4 family produces a fragmented file,
+// exactly as a remux does.
+//
+// A fragmented source is not trimmed, for the reason Remux does not remux one:
+// its samples are described by its moof boxes rather than by the movie header.
 //
 // # Remux
 //
-// Remux moves the streams of an MP4-family file into another container: mp4,
-// m4v, 3gp, mkv, or webm. Nothing is decoded and nothing is re-encoded.
-// The sample payload is copied verbatim as byte ranges, and the sample
-// descriptions, edit lists, and display matrices are copied verbatim too, so
-// the output probes and thumbnails to what the input did. Only video and audio
-// tracks come across; a timecode or subtitle track is dropped.
+// Remux moves the streams of a file into another container: mp4, m4v, 3gp,
+// mkv, or webm, from a source of either family. Nothing is decoded and nothing
+// is re-encoded. The sample payload is copied verbatim as byte ranges, and the
+// codec configuration is carried across, so the output probes and thumbnails
+// to what the input did. Only video and audio tracks come across; a timecode or
+// subtitle track is dropped.
 //
-// The output is header-first. The source's sample tables already give every
-// sample's size, so the output's chunk offsets are known before a byte of
-// payload is written, and the ftyp, the moov, and then the mdat go out in that
-// order. Probing the result therefore costs a read of its head, and a player
-// can start on it before it has the whole file.
+// The output is header-first whichever pairing it is, so probing the result
+// costs a read of its head and a player can start on it before it has the whole
+// file. From an MP4-family source the sample tables already give every sample's
+// size, so the chunk offsets are known before a byte of payload is written and
+// the ftyp, the moov, and then the mdat go out in that order. From a Matroska
+// source there is no such table, and "Fragmented output" is how the header
+// still goes first.
 //
 // Each track's samples are written as one chunk, one track after another,
 // rather than interleaved by time. That is valid and it keeps the writer
@@ -201,23 +210,83 @@
 // the video and the audio. Interleaving is the upgrade, and it changes nothing
 // a caller can see.
 //
-// Writing a Matroska or WebM output takes the same route: the samples are
+// An MP4-family source into a Matroska output takes the same route: the samples are
 // copied as byte ranges out of the source and the codec configuration records
 // are carried across, either verbatim, since Matroska adopted the same records
 // the MP4 family uses, or converted where the two families store the same
 // fields differently. AAC is one of those: Matroska stores the raw
 // AudioSpecificConfig, which lives inside the source's esds. Opus is the other:
-// Matroska stores the identification header whose body a dOps box holds.
+// Matroska stores the identification header whose body a dOps box holds. Going
+// the other way runs the same conversions backwards, so an AAC track gets its
+// esds rebuilt and an Opus track its dOps. VP8 and VP9 are the one loss:
+// Matroska carries no vpcC, so the output gets the minimum the box has to hold,
+// 8-bit 4:2:0 with the colour description left unspecified.
 //
-// A Matroska or WebM source is not remuxed yet, in either direction, and
-// returns ErrUnsupportedContainer. Its samples are described by its clusters
-// rather than by an up-front index, so an MP4 written from one cannot place its
-// header first from a single pass, and the fragmented output that would solve
-// that is not written yet.
+// Rotation does not survive a Matroska file in either direction. The format has
+// no display matrix, so there is nothing to carry into or out of a tkhd, and an
+// MP4 written from one is written unrotated.
+//
+// A Matroska or WebM source into another Matroska container is a copy of the
+// source's own clusters: the blocks move across as bytes, keyframe flags and
+// lacing included, and the cluster boundaries are the ones the source chose.
+// Into the MP4 family it is the fragmented writer, described next.
 //
 // A fragmented source is not remuxed. Its samples are described by its moof
 // boxes rather than by the movie header, and the writer builds its output from
 // the movie header, so a fragmented input returns ErrUnsupportedContainer.
+//
+// # Fragmented output
+//
+// An MP4 written from a Matroska or WebM source is a fragmented one: an ftyp,
+// then a moov whose sample tables are empty and whose mvex declares the tracks,
+// then a moof and an mdat for each of the source's clusters. The ftyp carries
+// the iso6 brand alongside the target's own, which is what says the file may
+// describe its samples that way.
+//
+// It is fragmented because Matroska has no up-front index. A cluster carries
+// its blocks and each block its own timestamp, and nothing before the media
+// says how many frames a track holds or how large each one is, so a writer
+// cannot put a moov in front of the payload without reading the whole file
+// first. Writing the index at the end would keep the output a plain MP4 at the
+// cost of buffering every sample's size and offset, unbounded in the length of
+// the input, or of reading the source twice. A fragmented file needs neither:
+// each fragment describes its own samples, and building one costs a cluster's
+// block headers, which is the bound the Matroska writer already works to. It is
+// also progressively playable, and it is what every streaming pipeline emits.
+// Nothing downstream has to change either, because the demuxer here already
+// reads fragmented files: the output probes, thumbnails, and trims through code
+// that was already there.
+//
+// Two numbers have to be derived on the way, because Matroska does not state
+// them.
+//
+// A block's duration is the step to the next block on the same track, which
+// costs one cluster of lookahead. The last block of the file falls back to the
+// track's DefaultDuration, or to the previous block's duration where the track
+// declares none.
+//
+// A block's decode time is the harder one. Matroska stores blocks in decode
+// order and stamps each with the time it is shown; an MP4 wants a decode time
+// and an offset from it to the presentation. Within a fragment the timestamps
+// are sorted: the frames of a group are shown in some permutation of the same
+// set of times, so the i-th block in storage order is decoded at the i-th
+// smallest timestamp. A reordered stream then has to be decoded before its
+// first frame is shown, which would want a decode time below zero, and an MP4
+// cannot express one. The presentation is pushed forward by that lead instead
+// and a one-entry edit list takes it back off, which is what every muxer does
+// and what keeps Probe and Thumbnail reporting the times the source stated. The
+// lead is measured over the first fragment each track appears in and rounded up
+// to a whole frame; a later fragment that reorders more deeply drives a
+// composition offset negative, and the signed form of the trun carries that.
+// Signed offsets alone, with no edit list, would say the same thing more
+// simply, but ffmpeg shifts a track with negative offsets later by the deepest
+// one, so a file written that way plays late there.
+//
+// One thing does not come across. A laced block, which packs several frames
+// into one to save a header each, has no equivalent in an MP4, where a sample
+// is a frame. Rather than take the block apart, the writer returns
+// ErrUnsupportedContainer naming the lacing. A Matroska output keeps such a
+// block as it stands.
 //
 // # Remux compatibility
 //
@@ -255,9 +324,12 @@
 //
 // The table speaks for the codecs and not for the source. A pairing it allows
 // can still fail at Remux for a reason that is not about the codec: a
-// fragmented source, a Matroska source, or a source whose codec configuration
-// this library cannot translate into the target's own form. Those return
-// ErrUnsupportedContainer naming what stopped them.
+// fragmented source, a laced Matroska block, or a source whose codec
+// configuration this library cannot translate into the target's own form. Those
+// return ErrUnsupportedContainer naming what stopped them. The last of those is
+// the narrowest gap today: an MP4 written from a Matroska source can describe
+// h264, hevc, av1, vp8, vp9, aac, and opus, and the other rows of the mp4
+// column have no sample entry built for them yet.
 //
 // What the table refuses, and why it is worth naming, is what a MOV can carry
 // and an MP4 cannot: ProRes, stored as apch, apcn, apcs, apco, or ap4h, and

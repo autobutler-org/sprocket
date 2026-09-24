@@ -7,12 +7,12 @@ import (
 	"slices"
 )
 
-// Target names a container this library can write. One writer covers the three
-// ISOBMFF ones: they differ by the brands in their ftyp and by what
-// CodecTargets lets into them, not by structure. The two Matroska ones are
-// written elsewhere and are named here because CodecTargets is one table for
-// every container, and splitting it would be two places for the same answer to
-// drift apart in.
+// Target names a container this library can write. The three ISOBMFF ones
+// differ by the brands in their ftyp and by what CodecTargets lets into them,
+// not by structure, so Write covers all three and so does WriteFragmented. The
+// two Matroska ones are written elsewhere and are named here because
+// CodecTargets is one table for every container, and splitting it would be two
+// places for the same answer to drift apart in.
 type Target string
 
 // The containers this library produces. Write produces the first three.
@@ -59,7 +59,13 @@ var targetBrands = map[Target]brandSet{
 //     authority has no entry for.
 //
 // Both CanRemux and the muxer read this, so the answer a caller is given and
-// the answer a remux acts on cannot drift apart.
+// the answer a remux acts on cannot drift apart. It speaks for the codec pair
+// and not for the source: a row it allows can still be refused by a writer that
+// has no way to name the codec in the target, which is what the Matroska
+// writer's codec identifier table and the fragmented writer's sample entry
+// table decide. Both report ErrUnsupportedSource rather than
+// ErrIncompatibleCodec, because the pairing is fine and this library is the
+// thing that falls short.
 //
 // alac, ac-3, and ec-3 are on the list: all three are registered for the MP4
 // family, alac through Apple's own registration and the two Dolby formats
@@ -451,7 +457,7 @@ func (b *boxWriter) tkhd(f *File, c cutTrack) {
 func (b *boxWriter) mdia(c cutTrack) int {
 	start := b.open("mdia")
 	b.mdhd(c)
-	b.hdlr(c.src)
+	b.hdlr(c.src.Handler)
 	at := b.minf(c)
 	b.close(start)
 	return at
@@ -491,12 +497,41 @@ func packLanguage(code string) uint16 {
 
 // hdlr writes the handler reference with an empty name.
 // ISO/IEC 14496-12 8.4.3.
-func (b *boxWriter) hdlr(t *Track) {
+func (b *boxWriter) hdlr(handler string) {
 	start := b.full("hdlr", 0, 0)
 	b.u32(0) // pre_defined
-	b.raw(fourcc(t.Handler))
+	b.raw(fourcc(handler))
 	b.zeros(12)      // reserved
 	b.raw([]byte{0}) // the name, empty
+	b.close(start)
+}
+
+// mediaHeader writes the media information header the handler calls for.
+// ISO/IEC 14496-12 8.4.5.
+func (b *boxWriter) mediaHeader(handler string) {
+	if handler == "soun" {
+		smhd := b.full("smhd", 0, 0)
+		b.u16(0) // balance, centred
+		b.u16(0) // reserved
+		b.close(smhd)
+		return
+	}
+	// The flags of a vmhd are always 1. ISO/IEC 14496-12 12.1.2.
+	vmhd := b.full("vmhd", 0, 1)
+	b.u16(0)   // graphics mode, copy
+	b.zeros(6) // opcolor
+	b.close(vmhd)
+}
+
+// dinf writes the data information box. The media lives in this file, which is
+// what a dref of one self-contained url entry says. ISO/IEC 14496-12 8.7.2.
+func (b *boxWriter) dinf() {
+	start := b.open("dinf")
+	dref := b.full("dref", 0, 0)
+	b.u32(1)
+	url := b.full("url ", 0, 1)
+	b.close(url)
+	b.close(dref)
 	b.close(start)
 }
 
@@ -504,30 +539,8 @@ func (b *boxWriter) hdlr(t *Track) {
 // offset field. ISO/IEC 14496-12 8.4.4.
 func (b *boxWriter) minf(c cutTrack) int {
 	start := b.open("minf")
-
-	if c.src.Handler == "soun" {
-		smhd := b.full("smhd", 0, 0)
-		b.u16(0) // balance, centred
-		b.u16(0) // reserved
-		b.close(smhd)
-	} else {
-		// The flags of a vmhd are always 1. ISO/IEC 14496-12 12.1.2.
-		vmhd := b.full("vmhd", 0, 1)
-		b.u16(0)   // graphics mode, copy
-		b.zeros(6) // opcolor
-		b.close(vmhd)
-	}
-
-	// The media lives in this file, which is what a dref of one self-contained
-	// url entry says. ISO/IEC 14496-12 8.7.2.
-	dinf := b.open("dinf")
-	dref := b.full("dref", 0, 0)
-	b.u32(1)
-	url := b.full("url ", 0, 1)
-	b.close(url)
-	b.close(dref)
-	b.close(dinf)
-
+	b.mediaHeader(c.src.Handler)
+	b.dinf()
 	at := b.stbl(c)
 	b.close(start)
 	return at

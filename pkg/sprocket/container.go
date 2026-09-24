@@ -17,6 +17,15 @@ type container struct {
 	mkv *matroska.File
 }
 
+// cut is a trim expressed the way each source family needs it. The ISOBMFF
+// side names sample indexes, which it has an index to name; the Matroska side
+// names a window of timestamps, which is all a file with no sample table can
+// be cut against. Neither is set for a whole-file remux.
+type cut struct {
+	ranges map[uint32]isobmff.Range
+	span   *matroska.TrimSpan
+}
+
 // open parses r as one of the container families this library reads. The
 // ISOBMFF parser is asked first and, when it says the file is not one of its
 // own, the Matroska parser is asked. Input neither recognizes reports
