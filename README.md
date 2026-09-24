@@ -23,14 +23,19 @@ a TS source is not supported yet; trimming an mp4 into a TS is. See `MPEG-TS` in
 package documentation. Work is tracked in
 [the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
 
-Keyframe decoding covers HEVC, VP8, and AV1, and H.264 behind the `h264` build
-tag. VP9 has no pure-Go decoder and returns the unsupported-codec error. The tag is
-there because H.264 is patent encumbered: Via LA's active AVC list still holds a
-patent mapped to core decoding that runs to November 2030 in the US, so opting in
-is a decision to take deliberately rather than one that arrives with `go get`.
-Build with `-tags h264` to compile the decoder in; without it an H.264 sample
-returns the unsupported-codec error naming the tag. That expiry is also when the
-decision gets looked at again.
+A default build decodes VP8 and AV1 keyframes, both royalty-free. H.264 sits behind
+the `h264` build tag and HEVC behind the `hevc` build tag; build with
+`-tags h264,hevc` for both. Without its tag, an H.264 or HEVC sample returns the
+unsupported-codec error naming the tag. VP9 has no pure-Go decoder and returns the
+same error. Probe, Trim, and Remux never decode, so they work for every codec in
+every build.
+
+The tags are there because both codecs are patent encumbered, and a decoder is
+what the pools count. Via LA's active AVC list still holds a patent mapped to core
+decoding that runs to November 2030 in the US. HEVC is licensed through several
+pools and was standardized a decade later, in 2013. Opting in to either is a decision
+to take deliberately rather than one that arrives with `go get`, and a downstream
+that decodes on licensed hardware elsewhere can build sprocket with neither.
 
 ```go
 file, err := os.Open("clip.mp4")
@@ -146,9 +151,9 @@ timestamps, offsets. The bulk of ffmpeg is codecs, and this library re-encodes
 nothing, so it needs no encoder and needs a decoder for one purpose only.
 
 Container support, in the order it was built: the ISOBMFF family (mp4, mov, m4v, 3gp,
-3g2), then Matroska and WebM, then MPEG-TS. Keyframe decoding covers HEVC, VP8, AV1
-and, behind the `h264` build tag, H.264. VP9 has no known pure-Go path and returns the
-unsupported-codec error.
+3g2), then Matroska and WebM, then MPEG-TS. Keyframe decoding covers VP8 and AV1
+and, behind the `h264` and `hevc` build tags, H.264 and HEVC. VP9 has no known pure-Go
+path and returns the unsupported-codec error.
 
 ## What it does not do
 
@@ -189,10 +194,12 @@ make check        # lint
 make test         # tests and coverage
 make build/cross  # linux/arm64 and darwin/arm64, CGO off
 make help         # every target
+
+go test -tags h264,hevc ./...  # with the H.264 and HEVC decoders
 ```
 
-There are two builds of this library, with and without the `h264` build tag, so
-those targets each run twice and both configurations have to pass.
+There are two builds of this library, the default and `-tags h264,hevc`, so those
+targets each run twice and both configurations have to pass.
 
 `make test/perf` times every operation against ffmpeg doing the same work on
 generated 1080p and 4K files and prints a table of wall times and peak memory. It
@@ -217,5 +224,8 @@ so this is the only one sprocket's users get. AVC is covered by patents licensed
 Via LA's AVC Patent Portfolio License and by holders outside that pool; if you
 distribute or use this software you may need a license from them. Via LA's published
 fee schedule counts a decoder on its own as one unit at the same rate as an encoder,
-so decoding is not a lighter position than encoding. That is what the `h264` build
-tag is for: nothing about H.264 is compiled in unless you ask for it.
+so decoding is not a lighter position than encoding.
+
+That is what the `h264` and `hevc` build tags are for: nothing about H.264 or HEVC is
+compiled in unless you ask for it. A default build decodes only AV1 and VP8, which are
+royalty-free, and Probe, Trim, and Remux move bytes without decoding any of them.

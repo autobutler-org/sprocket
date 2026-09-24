@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,16 +39,33 @@ func thumbnail(t *testing.T, name string, at time.Duration, opts sprocket.Thumbn
 	return sprocket.Thumbnail(file, stat.Size(), at, opts)
 }
 
-// mustThumbnail takes a thumbnail and fails if it could not be decoded. An
-// H.264 file in a build without the h264 tag skips instead, which is the
-// documented fallback rather than a failure.
+// skipIfCompiledOut skips a test whose thumbnail came back as the fallback for
+// a decoder this build leaves out. An H.264 file without the h264 tag, or an
+// HEVC one without the hevc tag, is the documented ErrUnsupportedCodec rather
+// than a failure, and there is no frame to assert anything about.
+func skipIfCompiledOut(t *testing.T, name string, err error) {
+	t.Helper()
+
+	if !errors.Is(err, sprocket.ErrUnsupportedCodec) {
+		return
+	}
+	for _, tag := range []struct {
+		name     string
+		compiled bool
+	}{{"h264", h264Compiled}, {"hevc", hevcCompiled}} {
+		if !tag.compiled && strings.Contains(err.Error(), "-tags "+tag.name) {
+			t.Skipf("%s needs the %s build tag", name, tag.name)
+		}
+	}
+}
+
+// mustThumbnail takes a thumbnail and fails if it could not be decoded. A file
+// whose decoder is compiled out skips instead.
 func mustThumbnail(t *testing.T, name string, at time.Duration, opts sprocket.ThumbnailOptions) sprocket.Frame {
 	t.Helper()
 
 	frame, err := thumbnail(t, name, at, opts)
-	if err != nil && !h264Compiled && errors.Is(err, sprocket.ErrUnsupportedCodec) {
-		t.Skipf("%s needs the h264 build tag", name)
-	}
+	skipIfCompiledOut(t, name, err)
 	if err != nil {
 		t.Fatalf("thumbnail %s: %v", name, err)
 	}
@@ -170,13 +188,28 @@ func TestThumbnailResizesToTheMaxDimension(t *testing.T) {
 }
 
 func TestThumbnailReportsAnUnsupportedCodec(t *testing.T) {
-	// Without the h264 build tag an H.264 file is exactly the fallback case the
-	// error documents: a readable container this build cannot picture.
-	if h264Compiled {
-		t.Skip("this build has an H.264 decoder, and the corpus has no other codec without one")
-	}
-	if _, err := thumbnail(t, "h264-aac.mp4", 0, sprocket.ThumbnailOptions{}); !errors.Is(err, sprocket.ErrUnsupportedCodec) {
-		t.Errorf("error = %v, want ErrUnsupportedCodec", err)
+	// Without its build tag an H.264 or HEVC file is exactly the fallback case
+	// the error documents: a readable container this build cannot picture. The
+	// error names the tag that puts the decoder in.
+	for _, tc := range []struct {
+		name, tag string
+		compiled  bool
+	}{
+		{name: "h264-aac.mp4", tag: "h264", compiled: h264Compiled},
+		{name: "hevc-aac-8bit.mov", tag: "hevc", compiled: hevcCompiled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.compiled {
+				t.Skipf("this build has the %s decoder", tc.tag)
+			}
+			_, err := thumbnail(t, tc.name, 0, sprocket.ThumbnailOptions{})
+			if !errors.Is(err, sprocket.ErrUnsupportedCodec) {
+				t.Fatalf("error = %v, want ErrUnsupportedCodec", err)
+			}
+			if !strings.Contains(err.Error(), "-tags "+tc.tag) {
+				t.Errorf("error = %q, want it to name the %s build tag", err, tc.tag)
+			}
+		})
 	}
 }
 
@@ -185,6 +218,9 @@ func TestThumbnailRejectsAnUndecodableKeyframe(t *testing.T) {
 	// keyframe and hands the decoder a sample with nothing in it. That is the
 	// one path where the failure comes from the decoder rather than the
 	// container, and it is a corrupt file either way.
+	if !hevcCompiled {
+		t.Skip("this build has no HEVC decoder to hand the wiped sample to")
+	}
 	wiped := readCorpus(t, "hevc-aac-8bit.mov")
 	mdat := topLevelOffset(t, wiped, "mdat")
 	size := int64(binary.BigEndian.Uint32(wiped[mdat:]))

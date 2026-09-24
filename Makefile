@@ -49,9 +49,10 @@ setup/gotools: ## Install go tools
 
 ##@ Build
 
-# The H.264 decoder sits behind the h264 build tag, so there are two builds of
-# this library rather than one. Every target that compiles or checks the code
-# runs both: a break in either configuration is a break.
+# The H.264 and HEVC decoders sit behind the h264 and hevc build tags, so there
+# are two builds of this library rather than one: the default, with neither, and
+# -tags h264,hevc, with both. Every target that compiles or checks the code runs
+# both: a break in either configuration is a break.
 
 .PHONY: build
 build: build/go ## Build codebase
@@ -59,7 +60,7 @@ build: build/go ## Build codebase
 .PHONY: build/go
 build/go: ## Build Go codebase
 	$(GO) build ./...
-	$(GO) build -tags h264 ./...
+	$(GO) build -tags h264,hevc ./...
 
 # The library promises no cgo and clean cross-compilation. Nothing links C today, so
 # the only way that promise stays true is to check it on every run.
@@ -67,8 +68,8 @@ build/go: ## Build Go codebase
 build/cross: ## Build for the supported cross-compilation targets with cgo off
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build ./...
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build ./...
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags h264 ./...
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags h264 ./...
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags h264,hevc ./...
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags h264,hevc ./...
 
 .PHONY: clean
 clean: ## Clean build space
@@ -81,9 +82,9 @@ test: ## Run tests
 	$(GO) test ./... \
 		-coverprofile=coverage.out \
 		-covermode=atomic
-	# The H.264 decoder is only in the second run, so that is the one whose
-	# coverage profile is kept.
-	$(GO) test -tags h264 ./... \
+	# The H.264 and HEVC decoders are only in the second run, so that is the one
+	# whose coverage profile is kept.
+	$(GO) test -tags h264,hevc ./... \
 		-coverprofile=coverage.out \
 		-covermode=atomic
 	if [[ "$(PRINT_COVERAGE)" = "1" || "$(PRINT_COVERAGE)" = "true" ]] ; then
@@ -104,7 +105,7 @@ test/perf: ## Compare speed and memory against ffmpeg (needs ffmpeg)
 		exit 1
 	fi
 	# go test runs in the package directory, so the output path has to be absolute.
-	PERF_OUT="$(abspath $(PERF_OUT))" $(GO) test -tags perf,h264 -run TestCompare -count=1 -timeout 30m -v ./internal/perf/
+	PERF_OUT="$(abspath $(PERF_OUT))" $(GO) test -tags perf,h264,hevc -run TestCompare -count=1 -timeout 30m -v ./internal/perf/
 
 ##@ Test Data
 
@@ -150,7 +151,7 @@ check: check/go ## Check code quality
 .PHONY: check/go
 check/go: ## Check Go code quality
 	$(GOLINT) run --fix $(GOLINT_ARGS) ./...
-	$(GOLINT) run --fix --build-tags h264 $(GOLINT_ARGS) ./...
+	$(GOLINT) run --fix --build-tags h264,hevc $(GOLINT_ARGS) ./...
 
 .PHONY: check/vuln
 check/vuln: ## Check Go module for known CVEs (govulncheck)
@@ -159,7 +160,7 @@ check/vuln: ## Check Go module for known CVEs (govulncheck)
 		exit 1
 	fi
 	govulncheck ./...
-	govulncheck -tags h264 ./...
+	govulncheck -tags h264,hevc ./...
 
 .PHONY: format
 format: format/go ## Format code
