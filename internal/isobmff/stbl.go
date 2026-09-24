@@ -240,6 +240,21 @@ func (s *sampleTables) syncAtOrBefore(index uint32) (uint32, bool) {
 	return best, found
 }
 
+// syncAfter returns the index of the first sync sample after index, and whether
+// the track has one. A track with no stss declares every sample a random access
+// point, so the answer there is simply the next sample.
+func (s *sampleTables) syncAfter(index uint32) (uint32, bool) {
+	if len(s.stss) == 0 {
+		return index + 1, index+1 < s.count
+	}
+	for off := 0; off+4 <= len(s.stss); off += 4 {
+		if n := be32(s.stss[off:]); n > 0 && n-1 > index {
+			return n - 1, true
+		}
+	}
+	return 0, false
+}
+
 // sampleSize returns the stored size of one sample.
 func (s *sampleTables) sampleSize(index uint32) (uint32, error) {
 	if index >= s.count {

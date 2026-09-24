@@ -18,6 +18,15 @@ var (
 	// ErrCorrupt means the container was recognized but is malformed or
 	// truncated where the headers live.
 	ErrCorrupt = errors.New("sprocket: corrupt file")
+	// ErrUnsupportedCodec means the file is readable but its video codec has no
+	// decoder here, so no frame can be produced. It is the signal to fall back
+	// to a generic icon rather than to fail: the file is fine, this library
+	// just cannot picture it.
+	ErrUnsupportedCodec = errors.New("sprocket: unsupported codec")
+	// ErrNoVideo means the file carries no video track, so there is nothing to
+	// take a thumbnail of. An audio-only file is not corrupt, which is why this
+	// is its own error.
+	ErrNoVideo = errors.New("sprocket: no video track")
 )
 
 // Info is what Probe reports about a file. Every zero value is meaningful.
@@ -66,7 +75,7 @@ type Info struct {
 func Probe(r io.ReaderAt, size int64) (Info, error) {
 	file, err := isobmff.Parse(r, size)
 	if err != nil {
-		return Info{}, probeError(err)
+		return Info{}, containerError(err)
 	}
 
 	info := Info{Duration: file.Duration()}
@@ -86,11 +95,15 @@ func Probe(r io.ReaderAt, size int64) (Info, error) {
 	return info, nil
 }
 
-// probeError maps a demuxer error onto this package's sentinels. The demuxer's
-// own sentinel stays in the chain, so errors.Is finds either one.
-func probeError(err error) error {
-	if errors.Is(err, isobmff.ErrNotISOBMFF) {
+// containerError maps a demuxer error onto this package's sentinels. The
+// demuxer's own sentinel stays in the chain, so errors.Is finds either one.
+func containerError(err error) error {
+	switch {
+	case errors.Is(err, isobmff.ErrNotISOBMFF):
 		return fmt.Errorf("%w: %w", ErrUnsupportedContainer, err)
+	case errors.Is(err, isobmff.ErrNoVideoTrack):
+		return fmt.Errorf("%w: %w", ErrNoVideo, err)
+	default:
+		return fmt.Errorf("%w: %w", ErrCorrupt, err)
 	}
-	return fmt.Errorf("%w: %w", ErrCorrupt, err)
 }

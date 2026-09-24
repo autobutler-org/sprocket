@@ -51,7 +51,8 @@
 // ffmpeg's render of the same frame that is a mean absolute error of 11 to 12
 // out of 255; telling ffmpeg to read the same planes as full range brings it
 // down to 0.4, which is the whole of the difference. Whatever converts these
-// frames for display has to apply the range and the matrix itself.
+// frames for display has to apply the range and the matrix itself, which is
+// what RGBA is for.
 //
 // # Memory
 //

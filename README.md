@@ -4,9 +4,10 @@ A Go library that probes, thumbnails, trims, and remuxes video files without ffm
 
 ## Status
 
-`Probe` works on the ISOBMFF family: mp4, mov, m4v, 3gp, and 3g2. Thumbnail, Trim,
-and Remux are not written yet, and neither is Matroska, WebM, or MPEG-TS support.
-Work is tracked in [the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
+`Probe` and `Thumbnail` work on the ISOBMFF family: mp4, mov, m4v, 3gp, and 3g2.
+Trim and Remux are not written yet, and neither is Matroska, WebM, or MPEG-TS
+support. Work is tracked in
+[the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
 
 Keyframe decoding covers HEVC, and H.264 behind the `h264` build tag. The tag is
 there because H.264 is patent encumbered: Via LA's active AVC list still holds a
@@ -41,6 +42,26 @@ scheme, and so are the bitrate and frame rate rules; see the package documentati
 Input that is not a container this library reads returns `ErrUnsupportedContainer`
 with no partial result, and headers that are malformed or cut short return
 `ErrCorrupt`.
+
+```go
+frame, err := sprocket.Thumbnail(file, stat.Size(), 5*time.Second,
+	sprocket.ThumbnailOptions{MaxDimension: 320})
+switch {
+case errors.Is(err, sprocket.ErrUnsupportedCodec):
+	return genericIcon() // the file is fine, this library cannot picture it
+case err != nil:
+	return err
+}
+fmt.Println(frame.Time) // the keyframe's own time, which is rarely the 5s asked for
+return png.Encode(out, frame.Image)
+```
+
+`Thumbnail` snaps to a keyframe, so `Frame.Time` is the time of the frame that came
+back rather than the one that was asked for. It picks the keyframe nearest the
+request, breaking a tie towards the earlier one and answering a time past the end of
+the file with the last keyframe. The track's rotation is applied, the planes are
+converted to RGB, and `MaxDimension` caps the longer side of the result without ever
+upscaling. `Frame.Image` is an `*image.RGBA`.
 
 ## What it does
 
