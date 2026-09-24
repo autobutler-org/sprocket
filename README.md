@@ -194,6 +194,12 @@ make help         # every target
 There are two builds of this library, with and without the `h264` build tag, so
 those targets each run twice and both configurations have to pass.
 
+`make test/perf` times every operation against ffmpeg doing the same work on
+generated 1080p and 4K files and prints a table of wall times and peak memory. It
+needs ffmpeg, sits behind the `perf` build tag so `make test` never builds it, and
+runs in the Performance workflow on every pull request and nightly, where the
+table lands in the run summary.
+
 ## License
 
 MIT No Attribution. See [LICENSE](LICENSE).

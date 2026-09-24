@@ -33,3 +33,6 @@ devenv.local.nix
 
 # direnv
 .direnv
+
+# make test/perf
+test-results/
