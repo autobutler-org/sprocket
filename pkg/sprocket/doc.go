@@ -21,10 +21,9 @@
 //
 // # Status
 //
-// Probe, Thumbnail, and Remux are implemented for the ISOBMFF family: mp4,
-// mov, m4v, 3gp, and 3g2. Keyframe decoding covers HEVC, and H.264 behind the
-// h264 build tag. Trim is not written yet, and neither is support for
-// Matroska, WebM, or MPEG-TS. See
+// All four operations are implemented for the ISOBMFF family: mp4, mov, m4v,
+// 3gp, and 3g2. Keyframe decoding covers HEVC, and H.264 behind the h264 build
+// tag. Matroska, WebM, and MPEG-TS are not supported yet. See
 // https://github.com/autobutler-org/sprocket/issues/13.
 //
 // # Thumbnails
@@ -62,6 +61,79 @@
 // and so is H.264 in a build without the h264 build tag. A file with no video
 // track returns ErrNoVideo, which is a different thing: nothing is wrong with
 // the file, it just holds no picture.
+//
+// # Trim
+//
+// Trim cuts a range out of a file and writes it as a file of the same family,
+// copying the samples across as byte ranges. Nothing is decoded and nothing is
+// re-encoded, which is what fixes where a cut can begin.
+//
+// The start snaps back to the keyframe at or before it. Frames between two
+// keyframes are coded against their neighbours, so a cut that began between
+// them would have to re-encode everything up to the next one, and re-encoding
+// is a non-goal. Trim returns the time the output actually begins at, on the
+// source's timeline, and that is the number to label the result with. A
+// negative start reads as zero, a start past the end of the file takes the last
+// keyframe, and a file whose first keyframe is not its first frame begins at
+// that first keyframe rather than failing: the nearest range that decodes beats
+// no range at all.
+//
+// The end has no such constraint and takes the last sample at or before it. An
+// end past the end of the file keeps the rest of it, and an end at or before
+// the start keeps the single sample the start snapped to, so a cut always holds
+// a frame.
+//
+// Every track is cut against the same window, and each lands on its own sample
+// boundaries. An audio frame is not a video frame: at 48 kHz an AAC frame is
+// about 21 milliseconds, so an audio track may carry up to one frame of sound
+// from before the video's first frame, and up to one after its last. Trim keeps
+// the frame that straddles the start rather than the one after it, since a
+// track that began late would be silent where the video is not, and that frame
+// of lead is the residual error against the video: closing it exactly would
+// mean re-encoding the audio. A track that declares keyframes of its own, which
+// audio rarely does, snaps back to one the way the video track does. A file
+// with no audio, or with several audio tracks, is cut the same way; a timecode
+// or subtitle track is dropped, as it is by Remux.
+//
+// # Trim timestamps
+//
+// The output's timestamps are rewritten, not shifted with an edit list, and the
+// source's edit list is dropped rather than carried across.
+//
+// The sample tables make this nearly free. stts holds durations rather than
+// absolute times, so cutting it at the first kept sample leaves that sample
+// decoding at zero with no arithmetic at all. A slice of a run table is still a
+// run table, which keeps the writer's shape: it copies tables rather than
+// rebuilding them, and memory stays flat whatever the length of the cut.
+//
+// ctts takes one adjustment. Its offsets say when a sample is displayed
+// relative to when it is decoded, and a video track's first frame usually
+// carries a couple of frames of encoder delay, which the source's edit list was
+// there to hide. Dropping the list without touching the offsets would show the
+// first frame that late while an audio track, which carries no ctts at all,
+// started at zero, so the cut would lead its audio by the difference. Instead
+// the span's earliest composition time is subtracted from every offset, which
+// puts the first displayed frame at zero and leaves the timing between samples
+// exactly as it was. Where reordering then drives an offset below zero the
+// table is written in its signed form, which is what version 1 of the box is
+// for.
+//
+// The tradeoff behind rewriting rather than writing an edit list is worth
+// stating. An edit list preserves the source's timing exactly and lets a player
+// trim the pre-roll itself; rewriting survives players that ignore edit lists,
+// which many do. Rewriting wins here because the pre-roll question does not
+// arise: the output already starts on a keyframe, so there is nothing before
+// its first frame to trim away, and the normalized offsets carry the rest.
+//
+// What is left is the sample grid. An audio track's first frame is the one the
+// cut landed on rather than the instant it asked for, so its sound sits up to
+// one frame, about 21 milliseconds for AAC at 48 kHz, from where the source had
+// it. Closing that would mean re-encoding. Probe reports the output's own
+// duration, which is the samples it kept rather than the window that was asked
+// for.
+//
+// A fragmented source is not trimmed, for the reason Remux is not: its samples
+// are described by its moof boxes rather than by the movie header.
 //
 // # Remux
 //

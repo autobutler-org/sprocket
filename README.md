@@ -4,9 +4,8 @@ A Go library that probes, thumbnails, trims, and remuxes video files without ffm
 
 ## Status
 
-`Probe`, `Thumbnail`, and `Remux` work on the ISOBMFF family: mp4, mov, m4v, 3gp,
-and 3g2. Trim is not written yet, and neither is Matroska, WebM, or MPEG-TS
-support. Work is tracked in
+All four operations work on the ISOBMFF family: mp4, mov, m4v, 3gp, and 3g2.
+Matroska, WebM, and MPEG-TS are not supported yet. Work is tracked in
 [the epic, #13](https://github.com/autobutler-org/sprocket/issues/13).
 
 Keyframe decoding covers HEVC, and H.264 behind the `h264` build tag. The tag is
@@ -62,6 +61,33 @@ request, breaking a tie towards the earlier one and answering a time past the en
 the file with the last keyframe. The track's rotation is applied, the planes are
 converted to RGB, and `MaxDimension` caps the longer side of the result without ever
 upscaling. `Frame.Image` is an `*image.RGBA`.
+
+```go
+out, err := os.Create("clip-trimmed.mp4")
+if err != nil {
+	return err
+}
+defer out.Close()
+
+start, err := sprocket.Trim(file, stat.Size(), out, sprocket.MP4, 30*time.Second, 45*time.Second)
+if err != nil {
+	return err
+}
+fmt.Println(start) // where the cut really begins, which is the keyframe at or before 30s
+```
+
+`Trim` copies a range of samples into a new file without re-encoding. The start
+snaps back to the keyframe at or before it, because a cut cannot begin mid-GOP
+without re-encoding, so the returned time is the one to label the result with;
+the end takes the last sample at or before it. Every track is cut against the
+same window on its own sample boundaries, so audio lands within one frame of the
+video, about 21 ms for AAC at 48 kHz. Timestamps are rewritten rather than
+expressed as an edit list: the source's edit list is dropped and the composition
+offsets are normalized in its place, so the output is displayed from its first
+frame on any player. The package documentation writes out what that trades away.
+Payload moves as byte ranges, so
+cutting ten seconds out of a 4 GiB file costs the same heap as cutting them out
+of a small one.
 
 ```go
 if !sprocket.CanRemux(info, sprocket.MP4) {

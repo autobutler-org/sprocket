@@ -17,10 +17,11 @@ import (
 // "Remux" for the table.
 var ErrIncompatible = errors.New("sprocket: codec does not fit the container")
 
-// Container names an output container for Remux.
+// Container names an output container for Remux and Trim, which write the same
+// set of them.
 type Container string
 
-// The containers Remux writes.
+// The containers Remux and Trim write.
 const (
 	MP4     Container = "mp4"
 	M4V     Container = "m4v"
@@ -68,22 +69,24 @@ func Remux(r io.ReaderAt, size int64, w io.Writer, target Container) error {
 	if err != nil {
 		return containerError(err)
 	}
-	if err := isobmff.Write(w, file, isobmff.Target(target)); err != nil {
-		return remuxError(err)
+	if err := isobmff.Write(w, file, isobmff.Target(target), nil); err != nil {
+		return writeError(err)
 	}
 	return nil
 }
 
-// remuxError maps a muxer error onto this package's sentinels. Anything the
-// muxer did not classify came from the writer, and is passed through so a
-// caller can recognize its own failure.
-func remuxError(err error) error {
+// writeError maps a muxer error onto this package's sentinels, for Remux and
+// for Trim, which go through the same writer. Anything the muxer did not
+// classify came from the writer, and is passed through so a caller can
+// recognize its own failure.
+func writeError(err error) error {
 	switch {
 	case errors.Is(err, isobmff.ErrIncompatibleCodec):
 		return fmt.Errorf("%w: %w", ErrIncompatible, err)
 	case errors.Is(err, isobmff.ErrUnsupportedSource), errors.Is(err, isobmff.ErrUnsupportedTarget):
 		return fmt.Errorf("%w: %w", ErrUnsupportedContainer, err)
-	case errors.Is(err, isobmff.ErrTruncated), errors.Is(err, isobmff.ErrMalformed):
+	case errors.Is(err, isobmff.ErrTruncated), errors.Is(err, isobmff.ErrMalformed),
+		errors.Is(err, isobmff.ErrNoSyncSample):
 		return fmt.Errorf("%w: %w", ErrCorrupt, err)
 	default:
 		return err

@@ -44,6 +44,16 @@ FF=(ffmpeg -y -hide_banner -loglevel error)
 "${FF[@]}" "${VIDEO[@]}" "${AUDIO[@]}" "${ENCODE[@]}" "${EXACT[@]}" \
 	-c:v libx265 -profile:v main10 -pix_fmt yuv420p10le -tag:v hvc1 hevc-aac-10bit.mov
 
+# H.264 + AAC with a keyframe every half second, three seconds long. Every other
+# file in the corpus has a single keyframe at the start, which cannot tell a trim
+# that landed on the right keyframe from one that landed on the only keyframe.
+# -g 12 -keyint_min 12 fixes the GOP at twelve frames of the 24 fps content and
+# -sc_threshold 0 stops a scene cut from inserting one anywhere else.
+"${FF[@]}" "${VIDEO[@]}" "${AUDIO[@]}" -t 3 \
+	-c:v libx264 -crf 40 -pix_fmt yuv420p -g 12 -keyint_min 12 -sc_threshold 0 \
+	-c:a aac -b:a 32k "${EXACT[@]}" \
+	h264-gop12.mp4
+
 # Video with no audio track.
 "${FF[@]}" "${VIDEO[@]}" "${ENCODE[@]}" -an "${EXACT[@]}" \
 	no-audio.mp4

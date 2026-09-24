@@ -108,6 +108,14 @@ func FuzzParse(f *testing.F) {
 		_, _ = file.ReadSyncSample(time.Hour)
 		// The muxer reads the same untrusted tables the lookups do, and it
 		// walks every sample rather than one, so it goes through the same door.
-		_ = Write(io.Discard, file, TargetMP4)
+		_ = Write(io.Discard, file, TargetMP4, nil)
+		// And again over a sample range, which is the trim: the ranges come
+		// from the same tables, and slicing them is more arithmetic to get
+		// wrong than copying them.
+		ranges, _, err := file.TrimRanges(time.Second, 2*time.Second)
+		if err != nil {
+			return
+		}
+		_ = Write(io.Discard, file, TargetMP4, ranges)
 	})
 }
