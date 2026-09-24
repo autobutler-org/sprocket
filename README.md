@@ -6,16 +6,16 @@ A Go library that probes, thumbnails, trims, and remuxes video files without ffm
 
 All four operations work on the ISOBMFF family: mp4, mov, m4v, 3gp, and 3g2, and
 on Matroska and WebM, in both directions. An mp4 goes into an mkv or a webm, and
-an mkv or a webm goes into an mp4, an m4v, or a 3gp. That last direction writes a
-**fragmented** MP4: Matroska has no up-front index, so nothing before the media
-says how many frames a track holds or how large each one is, and a `moov` cannot
-be placed in front of the payload from a single pass. One `moof` and one `mdat`
-per source cluster needs no index and costs a cluster's block headers. See
+an mkv or a webm goes into an mp4, a mov, an m4v, a 3gp, or a 3g2. That last
+direction writes a **fragmented** file: Matroska has no up-front index, so nothing
+before the media says how many frames a track holds or how large each one is, and a
+`moov` cannot be placed in front of the payload from a single pass. One `moof` and
+one `mdat` per source cluster needs no index and costs a cluster's block headers. See
 `Fragmented output` in the package documentation for what that means for the
 decode times and the edit list the writer has to derive.
 
 MPEG-TS (`.ts`, and the 192-byte-packet `.m2ts`) probes, thumbnails, and remuxes in
-both directions: a TS goes into an mp4, an m4v, or a 3gp, fragmented for the same
+both directions: a TS goes into any of the MP4 family, fragmented for the same
 reason as Matroska, and an MP4-family file goes into a TS. A transport stream has no
 header and no index, so `Probe` scans it, at most 4 MiB from the front and 4 MiB from
 the end, and a thumbnail seeks by estimate and reads forward to the keyframe. Trimming
@@ -124,18 +124,19 @@ defer out.Close()
 return sprocket.Remux(file, stat.Size(), out, sprocket.MP4)
 ```
 
-`Remux` moves the same streams into another container of the MP4 family without
-re-encoding. The `moov` goes in front of the payload, so the output is progressively
-playable and probing it costs a read of its head, and the payload is copied as byte
-ranges through a single buffer, so a multi-gigabyte file costs the same heap as a
-small one. Sample descriptions, edit lists, and display matrices are copied verbatim,
-so the output probes and thumbnails to what the input did.
+`Remux` moves the same streams into another container of the MP4 family (mp4, mov,
+m4v, 3gp, or 3g2) without re-encoding. The `moov` goes in front of the payload, so
+the output is progressively playable and probing it costs a read of its head, and
+the payload is copied as byte ranges through a single buffer, so a multi-gigabyte
+file costs the same heap as a small one. Sample descriptions, edit lists, and
+display matrices are copied verbatim, so the output probes and thumbnails to what
+the input did.
 
 Not every stream fits every container: a MOV carrying ProRes or PCM has no valid
-representation in an MP4. `CanRemux` answers that from a `Probe` result, so a caller
-can offer only the targets that will work, and a remux that cannot happen returns
-`ErrIncompatible` naming what blocked it. Both read the same table, which the package
-documentation writes out in full.
+representation in an MP4, though it goes into another MOV as it stands. `CanRemux`
+answers that from a `Probe` result, so a caller can offer only the targets that will
+work, and a remux that cannot happen returns `ErrIncompatible` naming what blocked it.
+Both read the same table, which the package documentation writes out in full.
 
 ## What it does
 

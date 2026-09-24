@@ -40,54 +40,88 @@ func probeBytes(t *testing.T, content []byte) sprocket.Info {
 	return info
 }
 
+// isobmffTargets is every header-first ISOBMFF container an H.264, HEVC, or
+// AAC source can be remuxed into.
+var isobmffTargets = []sprocket.Container{sprocket.MP4, sprocket.M4V, sprocket.ThreeGP, sprocket.MOV, sprocket.ThreeG2}
+
 func TestRemuxPreservesWhatProbeReports(t *testing.T) {
 	for _, name := range []string{
 		"hevc-aac-8bit.mov", "hevc-aac-10bit.mov", "h264-aac.mp4",
 		"h264-aac-faststart.mp4", "rotate-90.mp4", "rotate-180.mp4", "no-audio.mp4",
 	} {
-		t.Run(name, func(t *testing.T) {
-			want := probeBytes(t, readCorpus(t, name))
-			got := probeBytes(t, remuxed(t, name, sprocket.MP4))
+		for _, target := range isobmffTargets {
+			t.Run(name+"/"+string(target), func(t *testing.T) {
+				assertRemuxProbesAlike(t, name, target)
+			})
+		}
+	}
+}
 
-			// Bitrate is the only field that may move: it is derived from the
-			// file size, and the output drops whatever padding the source
-			// carried. Everything else has to survive the trip.
-			want.Bitrate, got.Bitrate = 0, 0
-			if got != want {
-				t.Errorf("probe of the remux = %+v, want %+v", got, want)
-			}
-		})
+// TestRemuxProResAndPCMIntoMOV is the pair an MP4 refuses and a MOV takes as it
+// stands: the sample descriptions, QuickTime sound description and all, are
+// native to the target.
+func TestRemuxProResAndPCMIntoMOV(t *testing.T) {
+	assertRemuxProbesAlike(t, "prores-pcm.mov", sprocket.MOV)
+	assertHeaderFirst(t, remuxed(t, "prores-pcm.mov", sprocket.MOV))
+}
+
+// assertRemuxProbesAlike remuxes a corpus file and checks the output probes to
+// what the source did.
+func assertRemuxProbesAlike(t *testing.T, name string, target sprocket.Container) {
+	t.Helper()
+
+	want := probeBytes(t, readCorpus(t, name))
+	got := probeBytes(t, remuxed(t, name, target))
+
+	// Bitrate is the only field that may move: it is derived from the file
+	// size, and the output drops whatever padding the source carried.
+	// Everything else has to survive the trip.
+	want.Bitrate, got.Bitrate = 0, 0
+	if got != want {
+		t.Errorf("probe of the remux = %+v, want %+v", got, want)
 	}
 }
 
 func TestRemuxPreservesTheThumbnail(t *testing.T) {
 	for _, name := range []string{"hevc-aac-8bit.mov", "h264-aac.mp4", "rotate-90.mp4"} {
-		t.Run(name, func(t *testing.T) {
-			source := readCorpus(t, name)
-			want, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), 0, sprocket.ThumbnailOptions{})
-			skipIfCompiledOut(t, name, err)
-			if err != nil {
-				t.Fatalf("thumbnail the source: %v", err)
-			}
+		for _, target := range []sprocket.Container{sprocket.MP4, sprocket.MOV, sprocket.ThreeG2} {
+			t.Run(name+"/"+string(target), func(t *testing.T) {
+				source := readCorpus(t, name)
+				want, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), 0, sprocket.ThumbnailOptions{})
+				skipIfCompiledOut(t, name, err)
+				if err != nil {
+					t.Fatalf("thumbnail the source: %v", err)
+				}
 
-			out := remuxed(t, name, sprocket.MP4)
-			got, err := sprocket.Thumbnail(bytes.NewReader(out), int64(len(out)), 0, sprocket.ThumbnailOptions{})
-			if err != nil {
-				t.Fatalf("thumbnail the remux: %v", err)
-			}
+				out := remuxed(t, name, target)
+				got, err := sprocket.Thumbnail(bytes.NewReader(out), int64(len(out)), 0, sprocket.ThumbnailOptions{})
+				if err != nil {
+					t.Fatalf("thumbnail the remux: %v", err)
+				}
 
-			if got.Time != want.Time {
-				t.Errorf("time = %v, want %v", got.Time, want.Time)
-			}
-			if !bytes.Equal(got.Image.(*image.RGBA).Pix, want.Image.(*image.RGBA).Pix) {
-				t.Error("the remuxed file decoded a different picture")
-			}
-		})
+				if got.Time != want.Time {
+					t.Errorf("time = %v, want %v", got.Time, want.Time)
+				}
+				if !bytes.Equal(got.Image.(*image.RGBA).Pix, want.Image.(*image.RGBA).Pix) {
+					t.Error("the remuxed file decoded a different picture")
+				}
+			})
+		}
 	}
 }
 
 func TestRemuxWritesTheHeaderBeforeThePayload(t *testing.T) {
-	out := remuxed(t, "hevc-aac-8bit.mov", sprocket.MP4)
+	for _, target := range []sprocket.Container{sprocket.MP4, sprocket.MOV} {
+		t.Run(string(target), func(t *testing.T) {
+			assertHeaderFirst(t, remuxed(t, "hevc-aac-8bit.mov", target))
+		})
+	}
+}
+
+// assertHeaderFirst checks a remux is ftyp, moov, mdat, and that probing it
+// stops at the header.
+func assertHeaderFirst(t *testing.T, out []byte) {
+	t.Helper()
 
 	want := []string{"ftyp", "moov", "mdat"}
 	if got := topLevelTypes(t, out); !slices.Equal(got, want) {
@@ -117,6 +151,8 @@ func TestRemuxWritesEveryTargetBrand(t *testing.T) {
 		{target: sprocket.MP4, brand: "isom"},
 		{target: sprocket.M4V, brand: "M4V "},
 		{target: sprocket.ThreeGP, brand: "3gp4"},
+		{target: sprocket.MOV, brand: "qt  "},
+		{target: sprocket.ThreeG2, brand: "3g2a"},
 	} {
 		t.Run(string(tc.target), func(t *testing.T) {
 			out := remuxed(t, "hevc-aac-8bit.mov", tc.target)
@@ -130,13 +166,35 @@ func TestRemuxWritesEveryTargetBrand(t *testing.T) {
 	}
 }
 
+// TestRemuxWritesTheQuickTimeFileType pins the MOV ftyp to the one Apple's
+// QuickTime File Format specification describes: qt as the major brand and the
+// only compatible one, and the specification's version as a BCD date for the
+// minor version.
+func TestRemuxWritesTheQuickTimeFileType(t *testing.T) {
+	out := remuxed(t, "h264-aac.mp4", sprocket.MOV)
+
+	want := []byte{
+		0, 0, 0, 0x14, 'f', 't', 'y', 'p',
+		'q', 't', ' ', ' ', 0x20, 0x05, 0x03, 0x00,
+		'q', 't', ' ', ' ',
+	}
+	if got := out[:len(want)]; !bytes.Equal(got, want) {
+		t.Errorf("ftyp = % x, want % x", got, want)
+	}
+}
+
 func TestRemuxRefusesProResAndPCM(t *testing.T) {
 	const name = "prores-pcm.mov"
 
 	source := readCorpus(t, name)
 	info := probeBytes(t, source)
-	if sprocket.CanRemux(info, sprocket.MP4) {
-		t.Errorf("CanRemux(%+v, mp4) = true, want false", info)
+	for _, target := range []sprocket.Container{sprocket.MP4, sprocket.ThreeG2} {
+		if sprocket.CanRemux(info, target) {
+			t.Errorf("CanRemux(%+v, %s) = true, want false", info, target)
+		}
+	}
+	if !sprocket.CanRemux(info, sprocket.MOV) {
+		t.Errorf("CanRemux(%+v, mov) = false, want true", info)
 	}
 
 	err := sprocket.Remux(bytes.NewReader(source), int64(len(source)), io.Discard, sprocket.MP4)
@@ -187,6 +245,19 @@ func TestCanRemux(t *testing.T) {
 		{video: "av1", audio: "aac", target: sprocket.TS, want: false},
 		{video: "h264", audio: "opus", target: sprocket.TS, want: false},
 		{video: "mpeg2video", audio: "mp2", target: sprocket.MP4, want: false},
+		// A MOV takes what an MP4 takes, and the QuickTime-only codecs too.
+		{video: "h264", audio: "aac", target: sprocket.MOV, want: true},
+		{video: "av1", audio: "opus", target: sprocket.MOV, want: true},
+		{video: "apcn", audio: "sowt", target: sprocket.MOV, want: true},
+		{video: "ap4x", audio: "lpcm", target: sprocket.MOV, want: true},
+		{video: "h264", audio: "raw ", target: sprocket.MOV, want: true},
+		{video: "vp8", audio: "vorbis", target: sprocket.MOV, want: false},
+		// A 3G2 takes what a 3GP takes.
+		{video: "h264", audio: "aac", target: sprocket.ThreeG2, want: true},
+		{video: "hevc", audio: "samr", target: sprocket.ThreeG2, want: true},
+		{video: "h264", audio: "sawb", target: sprocket.ThreeG2, want: true},
+		{video: "av1", audio: "aac", target: sprocket.ThreeG2, want: false},
+		{video: "apcn", audio: "aac", target: sprocket.ThreeG2, want: false},
 	} {
 		t.Run(tc.video+"+"+tc.audio+"/"+string(tc.target), func(t *testing.T) {
 			info := sprocket.Info{VideoCodec: tc.video, AudioCodec: tc.audio}
@@ -204,7 +275,9 @@ func TestCanRemuxAgreesWithRemux(t *testing.T) {
 	}
 
 	for _, name := range names {
-		for _, target := range []sprocket.Container{sprocket.MP4, sprocket.M4V, sprocket.ThreeGP, sprocket.TS} {
+		for _, target := range []sprocket.Container{
+			sprocket.MP4, sprocket.M4V, sprocket.ThreeGP, sprocket.MOV, sprocket.ThreeG2, sprocket.TS,
+		} {
 			t.Run(name+"/"+string(target), func(t *testing.T) {
 				source := readCorpus(t, name)
 				allowed := sprocket.CanRemux(probeBytes(t, source), target)

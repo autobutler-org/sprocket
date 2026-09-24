@@ -28,6 +28,8 @@ const (
 	MP4     Container = "mp4"
 	M4V     Container = "m4v"
 	ThreeGP Container = "3gp"
+	MOV     Container = "mov"
+	ThreeG2 Container = "3g2"
 	MKV     Container = "mkv"
 	WebM    Container = "webm"
 	TS      Container = "ts"

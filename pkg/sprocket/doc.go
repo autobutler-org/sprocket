@@ -25,8 +25,9 @@
 // 3gp, and 3g2.
 //
 // So are Matroska and WebM, in both directions. An MP4-family file goes into an
-// mkv or a webm, and a Matroska or WebM file goes into an mp4, an m4v, or a 3gp,
-// where the output is fragmented for the reason "Fragmented output" gives.
+// mkv or a webm, and a Matroska or WebM file goes into an mp4, a mov, an m4v, a
+// 3gp, or a 3g2, where the output is fragmented for the reason "Fragmented
+// output" gives.
 //
 // MPEG-TS probes, thumbnails, and remuxes in both directions. Trimming a TS
 // source is not supported; trimming an MP4-family file into a TS is. "MPEG-TS"
@@ -275,8 +276,8 @@
 //
 // # Remux
 //
-// Remux moves the streams of a file into another container: mp4, m4v, 3gp,
-// mkv, webm, or ts, from a source of any family, with the two exceptions
+// Remux moves the streams of a file into another container: mp4, mov, m4v,
+// 3gp, 3g2, mkv, webm, or ts, from a source of any family, with the two exceptions
 // "MPEG-TS" names. Nothing is decoded and nothing is re-encoded. The sample
 // payload is copied verbatim as byte ranges, except where "MPEG-TS" says it is
 // rebuilt, and the
@@ -291,6 +292,14 @@
 // the ftyp, the moov, and then the mdat go out in that order. From a Matroska
 // source there is no such table, and "Fragmented output" is how the header
 // still goes first.
+//
+// The five MP4-family targets share one writer and differ only in the ftyp and
+// in what the compatibility table lets into them. A mov is branded qt, the
+// QuickTime File Format's own brand, with the specification's version,
+// 0x20050300, as the minor version; a 3g2 is branded 3g2a, 3GPP2's. Because
+// sample descriptions are copied verbatim, a MOV source's ProRes and PCM
+// entries, QuickTime sound description and all, go back into a mov exactly as
+// they came, which is the one place they are native.
 //
 // Each track's samples are written as one chunk, one track after another,
 // rather than interleaved by time. That is valid and it keeps the writer
@@ -326,7 +335,8 @@
 // # Fragmented output
 //
 // An MP4 written from a Matroska, WebM, or MPEG-TS source is a fragmented one,
-// and what follows is written about Matroska; "MPEG-TS" says what differs for
+// and so is any other MP4-family output, a mov included, written from one; what
+// follows is written about an mp4 from Matroska; "MPEG-TS" says what differs for
 // a transport stream, which is where its samples come from rather than how
 // they are laid out. The file is an ftyp,
 // then a moov whose sample tables are empty and whose mvex declares the tracks,
@@ -388,21 +398,35 @@
 // caller is given ahead of time and the answer a remux acts on cannot drift.
 //
 //	codec   containers it may be written into
-//	h264    mp4, m4v, 3gp, mkv, ts
-//	hevc    mp4, m4v, 3gp, mkv, ts
-//	av1     mp4, mkv, webm
+//	h264    mp4, mov, m4v, 3gp, 3g2, mkv, ts
+//	hevc    mp4, mov, m4v, 3gp, 3g2, mkv, ts
+//	av1     mp4, mov, mkv, webm
 //	vp8     mkv, webm
-//	vp9     mp4, mkv, webm
-//	aac     mp4, m4v, 3gp, mkv, ts
-//	mp3     mp4, m4v, mkv, ts
-//	opus    mp4, mkv, webm
+//	vp9     mp4, mov, mkv, webm
+//	aac     mp4, mov, m4v, 3gp, 3g2, mkv, ts
+//	mp3     mp4, mov, m4v, mkv, ts
+//	opus    mp4, mov, mkv, webm
 //	vorbis  mkv, webm
-//	alac    mp4, m4v, mkv
-//	ac-3    mp4, m4v, mkv, ts
-//	ec-3    mp4, m4v, mkv, ts
-//	fLaC    mp4, mkv
-//	samr    3gp
-//	sawb    3gp
+//	alac    mp4, mov, m4v, mkv
+//	ac-3    mp4, mov, m4v, mkv, ts
+//	ec-3    mp4, mov, m4v, mkv, ts
+//	fLaC    mp4, mov, mkv
+//	samr    3gp, 3g2
+//	sawb    3gp, 3g2
+//	apch    mov
+//	apcn    mov
+//	apcs    mov
+//	apco    mov
+//	ap4h    mov
+//	ap4x    mov
+//	sowt    mov
+//	twos    mov
+//	lpcm    mov
+//	in24    mov
+//	in32    mov
+//	fl32    mov
+//	fl64    mov
+//	raw     mov
 //
 // A transport stream is the narrow target: it names its codecs by stream type,
 // and the ones this library writes are H.264, HEVC, AAC in ADTS, MPEG audio,
@@ -428,12 +452,15 @@
 // column have no sample entry built for them yet.
 //
 // What the table refuses, and why it is worth naming, is what a MOV can carry
-// and an MP4 cannot: ProRes, stored as apch, apcn, apcs, apco, or ap4h, and
-// uncompressed audio, stored as sowt, twos, lpcm, in24, in32, fl32, fl64, raw,
-// NONE, ulaw, or alaw. Those arrive here under their four-character codes, as
-// "Codec names" describes, and none of them is on the list. Remuxing one
+// and an MP4 cannot: ProRes, stored as apch, apcn, apcs, apco, ap4h, or ap4x,
+// and uncompressed audio, stored as sowt, twos, lpcm, in24, in32, fl32, fl64,
+// raw, NONE, ulaw, or alaw. Those arrive here under their four-character
+// codes, as "Codec names" describes. Remuxing one into anything but a mov
 // returns ErrIncompatible naming the codec and the container that refused it,
-// and CanRemux reports false for the same pair.
+// and CanRemux reports false for the same pair. A mov takes every one of them
+// but NONE, ulaw, and alaw, which stay off the list until a file carrying one
+// is here to test against. The mov column is otherwise the mp4 column, and the
+// 3g2 column the 3gp one.
 //
 // # Codec names
 //
