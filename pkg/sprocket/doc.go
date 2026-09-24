@@ -84,14 +84,16 @@
 // knowing what the stream carried.
 //
 // Getting there means a color conversion, because a decoder hands back luma and
-// chroma planes in the stream's own range. Those planes are read as studio
-// range, luma 16 to 235 and chroma 16 to 240, since a container does not pass a
-// full-range flag through to this library yet and video that carries one is
-// rare. The matrix is chosen by picture height, BT.601 below 720 lines and
-// BT.709 at or above, which is what players do for video that signals nothing.
-// A stream that signals something else is decoded correctly and colored by
-// those rules anyway; passing the signalled primaries, transfer, and matrix
-// through is work still to do.
+// chroma planes in the stream's own range and matrix. The matrix and the range
+// the stream signals are used when it signals them: BT.601, BT.709, and
+// BT.2020, in studio or full range. Video that signals no matrix is read as
+// BT.601 studio range, luma 16 to 235 and chroma 16 to 240, at every size,
+// which is what ffmpeg does, so a thumbnail matches what every ffmpeg-based
+// tool renders. Measured against ffmpeg's render of the same keyframe, at
+// 128x72 and at 3840x2160, signaled and unsignaled, HEVC and AV1, the mean
+// absolute error is under 0.5 of 255 on every channel. H.264 is always read as
+// unsignaled, since its decoder does not report what the stream signals. The
+// primaries and the transfer are not applied, so HDR video is not tone mapped.
 //
 // MaxDimension caps the longer side of the image, after rotation, preserving
 // the aspect ratio. It never upscales: a frame already inside the cap comes

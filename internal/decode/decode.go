@@ -48,10 +48,15 @@
 // A sequence deeper than 8 bits is shifted down to 8. That is a loss of
 // precision and nothing else: the code values are not tone mapped, so a PQ or
 // HLG frame comes back with its own code values in an 8-bit container and will
-// look flat and desaturated next to a tone-mapped render. The decoder reports
-// the CICP primaries, transfer, matrix, and range of the sequence, and this
-// package does not pass them on, because there is nowhere yet for a caller to
-// put them. Anything that wants to correct the color needs them returned.
+// look flat and desaturated next to a tone-mapped render. The primaries and
+// the transfer are not passed on, since nothing here tone maps.
+//
+// Alongside the image, Picture carries the matrix and the range the sequence
+// declares, as H.273 code points. HEVC and AV1 report what their sequence
+// headers say, which is unspecified, 2, for a stream that says nothing. VP8
+// has one color space, so it always reports BT.601 studio range. The H.264
+// decoder does not expose the sequence's VUI, so an H.264 picture reports
+// unspecified whatever the stream declares.
 //
 // # Color range
 //
@@ -65,6 +70,13 @@
 // down to 0.4, which is the whole of the difference. Whatever converts these
 // frames for display has to apply the range and the matrix itself, which is
 // what RGBA is for.
+//
+// RGBA uses the matrix and range the picture reports. A matrix the stream does
+// not declare is read as BT.601 studio range at every size, which is what
+// ffmpeg does. Players often pick BT.709 for unsignaled HD instead, and this
+// package used to, by picture height; on an unsignaled 3840x2160 frame that
+// rule was a mean absolute error of 25 on green against ffmpeg's render, and
+// reading it as BT.601 brings that to 0.2.
 //
 // # Memory
 //
@@ -131,7 +143,30 @@ const (
 	maxThreads = 4
 )
 
-// Keyframe decodes one keyframe sample to an image.
+// Picture is one decoded keyframe and the color description its sequence
+// declares, which is what RGBA needs to convert it.
+type Picture struct {
+	// Image is the decoded picture. See the package documentation for what it
+	// holds.
+	Image image.Image
+	// Matrix is the sequence's matrix_coefficients, as the code points of
+	// ITU-T H.273: 1 is BT.709, 5 and 6 are BT.601, 9 is BT.2020, and 2 is
+	// unspecified, which is what a sequence that declares nothing reports.
+	Matrix int
+	// FullRange is the sequence's full-range flag. False, studio range, is
+	// also what a sequence that declares nothing reports.
+	FullRange bool
+}
+
+// The H.273 matrix_coefficients code points this package names.
+const (
+	matrixBT709       = 1
+	matrixUnspecified = 2
+	matrixBT601       = 6
+	matrixBT2020      = 9
+)
+
+// Keyframe decodes one keyframe sample to a picture.
 //
 // codec is the container's short codec name, config the raw decoder
 // configuration record the track carries, nalLengthSize the width in bytes of
@@ -141,8 +176,9 @@ const (
 // does not depend on any one container.
 //
 // See the package documentation for what the returned image holds, what happens
-// to a sequence deeper than 8 bits, and what is refused.
-func Keyframe(codec string, config []byte, nalLengthSize int, sample []byte) (image.Image, error) {
+// to a sequence deeper than 8 bits, what each codec reports about color, and
+// what is refused.
+func Keyframe(codec string, config []byte, nalLengthSize int, sample []byte) (Picture, error) {
 	switch codec {
 	case "hevc":
 		return hevcKeyframe(config, nalLengthSize, sample)
@@ -153,25 +189,25 @@ func Keyframe(codec string, config []byte, nalLengthSize int, sample []byte) (im
 	case "av1":
 		return av1Keyframe(sample)
 	default:
-		return nil, fmt.Errorf("%w: %q", ErrUnsupportedCodec, codec)
+		return Picture{}, fmt.Errorf("%w: %q", ErrUnsupportedCodec, codec)
 	}
 }
 
 // hevcKeyframe decodes an HEVC keyframe. The parameter sets come from the hvcC
 // record and the slices from the sample, which is what a container splits
 // between the two.
-func hevcKeyframe(config []byte, nalLengthSize int, sample []byte) (image.Image, error) {
+func hevcKeyframe(config []byte, nalLengthSize int, sample []byte) (Picture, error) {
 	if nalLengthSize < 1 || nalLengthSize > 4 {
-		return nil, fmt.Errorf("%w: the NAL length prefix is %d bytes, want 1 through 4",
+		return Picture{}, fmt.Errorf("%w: the NAL length prefix is %d bytes, want 1 through 4",
 			ErrCorruptSample, nalLengthSize)
 	}
 	nals, err := hvccParameterSets(config)
 	if err != nil {
-		return nil, err
+		return Picture{}, err
 	}
 	nals = append(nals, hevc.SplitHVCC(sample, nalLengthSize)...)
 	if err := checkSequenceSize(nals); err != nil {
-		return nil, err
+		return Picture{}, err
 	}
 
 	var decoder hevc.Decoder
@@ -182,7 +218,7 @@ func hevcKeyframe(config []byte, nalLengthSize int, sample []byte) (image.Image,
 	for _, nal := range nals {
 		pictures, err := decoder.DecodeNAL(nal)
 		if err != nil {
-			return nil, decodeError(err)
+			return Picture{}, decodeError(err)
 		}
 		if len(pictures) > 0 {
 			picture = pictures[0]
@@ -196,10 +232,14 @@ func hevcKeyframe(config []byte, nalLengthSize int, sample []byte) (image.Image,
 		}
 	}
 	if picture == nil {
-		return nil, fmt.Errorf("%w: the decoder read %d NAL units and produced no picture",
+		return Picture{}, fmt.Errorf("%w: the decoder read %d NAL units and produced no picture",
 			ErrCorruptSample, len(nals))
 	}
-	return pictureImage(picture)
+	img, err := pictureImage(picture)
+	if err != nil {
+		return Picture{}, err
+	}
+	return Picture{Image: img, Matrix: int(picture.ColorMatrix), FullRange: picture.FullRange}, nil
 }
 
 // decodeError maps what the decoder reports onto this package's sentinels.

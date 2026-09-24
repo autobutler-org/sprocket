@@ -29,11 +29,11 @@ func FuzzHVCC(f *testing.F) {
 	f.Add([]byte(nil))
 
 	f.Fuzz(func(t *testing.T, config []byte) {
-		img, err := decode.Keyframe("hevc", config, fuzzNALLengthSize, nil)
+		picture, err := decode.Keyframe("hevc", config, fuzzNALLengthSize, nil)
 		if err != nil {
 			return
 		}
-		readEveryPixel(t, img)
+		readEveryPixel(t, picture.Image)
 	})
 }
 
@@ -46,11 +46,11 @@ func FuzzKeyframe(f *testing.F) {
 	f.Add([]byte(nil), []byte(nil))
 
 	f.Fuzz(func(t *testing.T, config, sample []byte) {
-		img, err := decode.Keyframe("hevc", config, fuzzNALLengthSize, sample)
+		picture, err := decode.Keyframe("hevc", config, fuzzNALLengthSize, sample)
 		if err != nil {
 			return
 		}
-		readEveryPixel(t, img)
+		readEveryPixel(t, picture.Image)
 	})
 }
 
@@ -96,10 +96,10 @@ func FuzzKeyframeAV1(f *testing.F) {
 func fuzzDecode(t *testing.T, codec string, sample []byte) {
 	t.Helper()
 
-	img, err := decode.Keyframe(codec, nil, 0, sample)
+	picture, err := decode.Keyframe(codec, nil, 0, sample)
 	if err != nil {
 		return
 	}
-	readEveryPixel(t, img)
-	_ = decode.RGBA(img)
+	readEveryPixel(t, picture.Image)
+	_ = decode.RGBA(picture)
 }
