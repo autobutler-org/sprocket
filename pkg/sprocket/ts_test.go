@@ -224,16 +224,18 @@ func syncData(t *testing.T, content []byte) []byte {
 
 func TestRemuxTSIntoMP4(t *testing.T) {
 	for _, name := range []string{"h264-aac.ts", "hevc-aac.ts", "h264-gop12.ts", "h264-aac.m2ts"} {
-		t.Run(name, func(t *testing.T) {
-			source := readCorpus(t, name)
-			out := remuxed(t, name, sprocket.MP4)
-			if types := topLevelTypes(t, out); !slices.Contains(types, "moof") {
-				t.Fatalf("box order = %v, want movie fragments", types)
-			}
-			info := probeBytes(t, source)
-			assertProbesAgree(t, probeBytes(t, out), info)
-			assertSameKeyframe(t, syncData(t, out), syncData(t, readCorpus(t, tsTwins[name])), info.VideoCodec)
-		})
+		for _, target := range fragmentedTargets {
+			t.Run(name+"/"+string(target), func(t *testing.T) {
+				source := readCorpus(t, name)
+				out := remuxed(t, name, target)
+				if types := topLevelTypes(t, out); !slices.Contains(types, "moof") {
+					t.Fatalf("box order = %v, want movie fragments", types)
+				}
+				info := probeBytes(t, source)
+				assertProbesAgree(t, probeBytes(t, out), info)
+				assertSameKeyframe(t, syncData(t, out), syncData(t, readCorpus(t, tsTwins[name])), info.VideoCodec)
+			})
+		}
 	}
 }
 

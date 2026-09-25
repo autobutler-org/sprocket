@@ -7,19 +7,21 @@ import (
 	"slices"
 )
 
-// Target names a container this library can write. The three ISOBMFF ones
+// Target names a container this library can write. The five ISOBMFF ones
 // differ by the brands in their ftyp and by what CodecTargets lets into them,
-// not by structure, so Write covers all three and so does WriteFragmented. The
+// not by structure, so Write covers all five and so does WriteFragmented. The
 // two Matroska ones and MPEG-TS are written elsewhere and are named here
 // because CodecTargets is one table for every container, and splitting it would
 // be two places for the same answer to drift apart in.
 type Target string
 
-// The containers this library produces. Write produces the first three.
+// The containers this library produces. Write produces the first five.
 const (
 	TargetMP4  Target = "mp4"
 	TargetM4V  Target = "m4v"
 	Target3GP  Target = "3gp"
+	TargetMOV  Target = "mov"
+	Target3G2  Target = "3g2"
 	TargetMKV  Target = "mkv"
 	TargetWebM Target = "webm"
 	TargetTS   Target = "ts"
@@ -28,23 +30,34 @@ const (
 // targets is every container the compatibility table speaks for. A Target that
 // is not on it fits nothing.
 var targets = map[Target]bool{
-	TargetMP4: true, TargetM4V: true, Target3GP: true,
+	TargetMP4: true, TargetM4V: true, Target3GP: true, TargetMOV: true, Target3G2: true,
 	TargetMKV: true, TargetWebM: true, TargetTS: true,
 }
 
 // brandSet is one target's ftyp: the major brand that says what the file is,
-// and the compatible brands that say what a reader may treat it as.
+// its minor version, and the compatible brands that say what a reader may
+// treat it as.
 type brandSet struct {
 	major      string
+	minor      uint32
 	compatible []string
 }
 
+// quickTimeVersion is the minor version a MOV declares: the version of the
+// QuickTime File Format specification it follows, as the BCD date the
+// specification asks for and Apple's own muxers write.
+const quickTimeVersion = 0x20050300
+
 // targetBrands is the ftyp each target gets. ISO/IEC 14496-12 4.3,
-// ISO/IEC 14496-14 4 for mp4, and 3GPP TS 26.244 for 3gp.
+// ISO/IEC 14496-14 4 for mp4, 3GPP TS 26.244 for 3gp, 3GPP2 C.S0050 for 3g2,
+// and Apple's QuickTime File Format specification for mov, where qt alone
+// says the file is a QuickTime movie.
 var targetBrands = map[Target]brandSet{
 	TargetMP4: {major: "isom", compatible: []string{"isom", "iso2", "avc1", "mp41"}},
 	TargetM4V: {major: "M4V ", compatible: []string{"M4V ", "M4A ", "mp42", "isom"}},
 	Target3GP: {major: "3gp4", compatible: []string{"3gp4", "isom", "mp41"}},
+	Target3G2: {major: "3g2a", compatible: []string{"3g2a", "isom", "mp41"}},
+	TargetMOV: {major: "qt  ", minor: quickTimeVersion, compatible: []string{"qt  "}},
 }
 
 // CodecTargets is the codec and container compatibility table: which of this
@@ -53,11 +66,17 @@ var targetBrands = map[Target]brandSet{
 // written into any of these containers, which is what keeps the MOV-only
 // codecs out of an MP4 without naming every one of them:
 //
-//   - ProRes, stored as apch, apcn, apcs, apco, or ap4h.
+//   - ProRes, stored as apch, apcn, apcs, apco, ap4h, or ap4x.
 //   - Uncompressed and lightly compressed PCM, stored as sowt, twos, lpcm,
 //     in24, in32, fl32, fl64, raw, NONE, ulaw, or alaw.
 //   - Anything else a QuickTime file may carry that the MP4 registration
 //     authority has no entry for.
+//
+// MOV takes everything MP4 does, and the ProRes and uncompressed PCM entries
+// on top: those arrive only from a MOV source, whose sample description the
+// writer copies verbatim, so they go back into a MOV as they came. NONE, ulaw,
+// and alaw are left off until a file carrying one is here to test against. 3G2
+// takes what 3GP takes.
 //
 // Both CanRemux and the muxer read this, so the answer a caller is given and
 // the answer a remux acts on cannot drift apart. It speaks for the codec pair
@@ -82,21 +101,35 @@ var targetBrands = map[Target]brandSet{
 // codecs by stream type, and the registered types this library can write are
 // H.264, HEVC, AAC in ADTS, MPEG audio, and the two Dolby formats.
 var CodecTargets = map[string][]Target{
-	"h264":   {TargetMP4, TargetM4V, Target3GP, TargetMKV, TargetTS},
-	"hevc":   {TargetMP4, TargetM4V, Target3GP, TargetMKV, TargetTS},
-	"av1":    {TargetMP4, TargetMKV, TargetWebM},
+	"h264":   {TargetMP4, TargetM4V, Target3GP, Target3G2, TargetMOV, TargetMKV, TargetTS},
+	"hevc":   {TargetMP4, TargetM4V, Target3GP, Target3G2, TargetMOV, TargetMKV, TargetTS},
+	"av1":    {TargetMP4, TargetMOV, TargetMKV, TargetWebM},
 	"vp8":    {TargetMKV, TargetWebM},
-	"vp9":    {TargetMP4, TargetMKV, TargetWebM},
-	"aac":    {TargetMP4, TargetM4V, Target3GP, TargetMKV, TargetTS},
-	"mp3":    {TargetMP4, TargetM4V, TargetMKV, TargetTS},
-	"opus":   {TargetMP4, TargetMKV, TargetWebM},
+	"vp9":    {TargetMP4, TargetMOV, TargetMKV, TargetWebM},
+	"aac":    {TargetMP4, TargetM4V, Target3GP, Target3G2, TargetMOV, TargetMKV, TargetTS},
+	"mp3":    {TargetMP4, TargetM4V, TargetMOV, TargetMKV, TargetTS},
+	"opus":   {TargetMP4, TargetMOV, TargetMKV, TargetWebM},
 	"vorbis": {TargetMKV, TargetWebM},
-	"alac":   {TargetMP4, TargetM4V, TargetMKV},
-	"ac-3":   {TargetMP4, TargetM4V, TargetMKV, TargetTS},
-	"ec-3":   {TargetMP4, TargetM4V, TargetMKV, TargetTS},
-	"fLaC":   {TargetMP4, TargetMKV},
-	"samr":   {Target3GP},
-	"sawb":   {Target3GP},
+	"alac":   {TargetMP4, TargetM4V, TargetMOV, TargetMKV},
+	"ac-3":   {TargetMP4, TargetM4V, TargetMOV, TargetMKV, TargetTS},
+	"ec-3":   {TargetMP4, TargetM4V, TargetMOV, TargetMKV, TargetTS},
+	"fLaC":   {TargetMP4, TargetMOV, TargetMKV},
+	"samr":   {Target3GP, Target3G2},
+	"sawb":   {Target3GP, Target3G2},
+	"apch":   {TargetMOV},
+	"apcn":   {TargetMOV},
+	"apcs":   {TargetMOV},
+	"apco":   {TargetMOV},
+	"ap4h":   {TargetMOV},
+	"ap4x":   {TargetMOV},
+	"sowt":   {TargetMOV},
+	"twos":   {TargetMOV},
+	"lpcm":   {TargetMOV},
+	"in24":   {TargetMOV},
+	"in32":   {TargetMOV},
+	"fl32":   {TargetMOV},
+	"fl64":   {TargetMOV},
+	"raw ":   {TargetMOV}, //nolint:gocritic // the sample entry code is raw and a space, as stored
 }
 
 // CodecFits reports whether a codec short name may be written into a target.
@@ -300,7 +333,7 @@ func ftypBox(brands brandSet) []byte {
 	var b boxWriter
 	start := b.open("ftyp")
 	b.raw(fourcc(brands.major))
-	b.u32(0) // minor version
+	b.u32(brands.minor)
 	for _, brand := range brands.compatible {
 		b.raw(fourcc(brand))
 	}

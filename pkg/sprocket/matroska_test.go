@@ -220,38 +220,52 @@ var matroskaSources = []string{"h264-aac.mkv", "hevc-aac.mkv", "h264-gop12.mkv",
 // of them.
 func TestRemuxMatroskaIntoMP4(t *testing.T) {
 	for _, name := range matroskaSources {
-		t.Run(name, func(t *testing.T) {
-			source := readCorpus(t, name)
-			want := probeBytes(t, source)
+		for _, target := range fragmentedTargets {
+			t.Run(name+"/"+string(target), func(t *testing.T) {
+				assertMatroskaRemuxProbesAlike(t, name, target)
+			})
+		}
+	}
+}
 
-			out := remuxed(t, name, sprocket.MP4)
-			if types := topLevelTypes(t, out); !slices.Contains(types, "moof") {
-				t.Fatalf("box order = %v, want movie fragments in it", types)
-			}
-			got := probeBytes(t, out)
+// fragmentedTargets are the containers a source with no index is remuxed into
+// as a fragmented file, for every codec the Matroska corpus carries.
+var fragmentedTargets = []sprocket.Container{sprocket.MP4, sprocket.MOV}
 
-			// The duration is the source's own, carried into the movie header,
-			// so it comes back exactly rather than within a frame.
-			if got.Duration != want.Duration {
-				t.Errorf("duration = %v, want %v", got.Duration, want.Duration)
-			}
-			if got.Width != want.Width || got.Height != want.Height {
-				t.Errorf("dimensions = %dx%d, want %dx%d", got.Width, got.Height, want.Width, want.Height)
-			}
-			if got.VideoCodec != want.VideoCodec || got.AudioCodec != want.AudioCodec {
-				t.Errorf("codecs = %s/%s, want %s/%s",
-					got.VideoCodec, got.AudioCodec, want.VideoCodec, want.AudioCodec)
-			}
-			// Matroska states a nominal frame rate and the output states a
-			// measured one, so they agree to the rounding of one frame time.
-			const frameRateTolerance = 0.01
-			if diff := got.FrameRate - want.FrameRate; diff > frameRateTolerance || diff < -frameRateTolerance {
-				t.Errorf("frame rate = %v, want %v", got.FrameRate, want.FrameRate)
-			}
-			if got.Rotation != 0 {
-				t.Errorf("rotation = %d, want 0: Matroska has no display matrix to carry across", got.Rotation)
-			}
-		})
+// assertMatroskaRemuxProbesAlike remuxes a Matroska corpus file into the MP4
+// family and checks the fragmented output probes to what the source did.
+func assertMatroskaRemuxProbesAlike(t *testing.T, name string, target sprocket.Container) {
+	t.Helper()
+
+	source := readCorpus(t, name)
+	want := probeBytes(t, source)
+
+	out := remuxed(t, name, target)
+	if types := topLevelTypes(t, out); !slices.Contains(types, "moof") {
+		t.Fatalf("box order = %v, want movie fragments in it", types)
+	}
+	got := probeBytes(t, out)
+
+	// The duration is the source's own, carried into the movie header,
+	// so it comes back exactly rather than within a frame.
+	if got.Duration != want.Duration {
+		t.Errorf("duration = %v, want %v", got.Duration, want.Duration)
+	}
+	if got.Width != want.Width || got.Height != want.Height {
+		t.Errorf("dimensions = %dx%d, want %dx%d", got.Width, got.Height, want.Width, want.Height)
+	}
+	if got.VideoCodec != want.VideoCodec || got.AudioCodec != want.AudioCodec {
+		t.Errorf("codecs = %s/%s, want %s/%s",
+			got.VideoCodec, got.AudioCodec, want.VideoCodec, want.AudioCodec)
+	}
+	// Matroska states a nominal frame rate and the output states a
+	// measured one, so they agree to the rounding of one frame time.
+	const frameRateTolerance = 0.01
+	if diff := got.FrameRate - want.FrameRate; diff > frameRateTolerance || diff < -frameRateTolerance {
+		t.Errorf("frame rate = %v, want %v", got.FrameRate, want.FrameRate)
+	}
+	if got.Rotation != 0 {
+		t.Errorf("rotation = %d, want 0: Matroska has no display matrix to carry across", got.Rotation)
 	}
 }
 
@@ -261,28 +275,37 @@ func TestRemuxMatroskaIntoMP4(t *testing.T) {
 // time as one of the source.
 func TestRemuxMatroskaIntoMP4KeepsTheThumbnail(t *testing.T) {
 	for _, name := range []string{"hevc-aac.mkv", "h264-aac.mkv", "h264-gop12.mkv", "av1-opus.webm"} {
-		t.Run(name, func(t *testing.T) {
-			source := readCorpus(t, name)
-			out := remuxed(t, name, sprocket.MP4)
+		for _, target := range fragmentedTargets {
+			t.Run(name+"/"+string(target), func(t *testing.T) {
+				assertThumbnailsAlike(t, name, remuxed(t, name, target))
+			})
+		}
+	}
+}
 
-			for _, at := range []time.Duration{0, 1300 * time.Millisecond} {
-				want, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), at, sprocket.ThumbnailOptions{})
-				skipIfCompiledOut(t, name, err)
-				if err != nil {
-					t.Fatalf("thumbnail the source at %v: %v", at, err)
-				}
-				got, err := sprocket.Thumbnail(bytes.NewReader(out), int64(len(out)), at, sprocket.ThumbnailOptions{})
-				if err != nil {
-					t.Fatalf("thumbnail the remux at %v: %v", at, err)
-				}
-				if got.Time != want.Time {
-					t.Errorf("at %v the remux's keyframe is at %v and the source's at %v", at, got.Time, want.Time)
-				}
-				if !bytes.Equal(got.Image.(*image.RGBA).Pix, want.Image.(*image.RGBA).Pix) {
-					t.Errorf("at %v the remux decoded a different picture", at)
-				}
-			}
-		})
+// assertThumbnailsAlike checks a remux thumbnails to the same picture at the
+// same time as its source, at the start and part way through.
+func assertThumbnailsAlike(t *testing.T, name string, out []byte) {
+	t.Helper()
+
+	source := readCorpus(t, name)
+
+	for _, at := range []time.Duration{0, 1300 * time.Millisecond} {
+		want, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), at, sprocket.ThumbnailOptions{})
+		skipIfCompiledOut(t, name, err)
+		if err != nil {
+			t.Fatalf("thumbnail the source at %v: %v", at, err)
+		}
+		got, err := sprocket.Thumbnail(bytes.NewReader(out), int64(len(out)), at, sprocket.ThumbnailOptions{})
+		if err != nil {
+			t.Fatalf("thumbnail the remux at %v: %v", at, err)
+		}
+		if got.Time != want.Time {
+			t.Errorf("at %v the remux's keyframe is at %v and the source's at %v", at, got.Time, want.Time)
+		}
+		if !bytes.Equal(got.Image.(*image.RGBA).Pix, want.Image.(*image.RGBA).Pix) {
+			t.Errorf("at %v the remux decoded a different picture", at)
+		}
 	}
 }
 
