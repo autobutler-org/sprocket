@@ -31,6 +31,7 @@ script is 660 KB on disk.
 | `h264-aac.mkv` | H.264 + AAC in Matroska, the same bitstreams `h264-aac.mp4` carries, so a remux between the two families can be compared against a source that differs only in its container |
 | `h264-gop12.mkv` | the Matroska twin of `h264-gop12.mp4`: three seconds with a keyframe every twelve frames, so the `Cues` index holds more than one entry |
 | `hevc-aac.mkv` | HEVC + AAC in Matroska: a codec whose configuration record is not `avcC`, and the one Matroska file a build without the `h264` tag can decode a frame out of |
+| `hevc-aac-copy.mkv` | HEVC + AAC copied into Matroska out of `hevc-aac-8bit.mov`, the way `ffmpeg -c copy` users make one: its Video element carries a Colour master element |
 | `vp8-vorbis.webm` | VP8 + Vorbis in WebM |
 | `vp9-opus.webm` | VP9 + Opus in WebM: the video codec with no decoder here, which has to probe correctly and return the typed unsupported-codec error from the thumbnail path |
 | `av1-opus.webm` | AV1 + Opus in WebM |

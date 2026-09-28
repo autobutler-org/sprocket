@@ -98,6 +98,11 @@ done
 "${FF[@]}" "${VIDEO[@]}" "${AUDIO[@]}" "${ENCODE[@]}" "${EXACT[@]}" \
 	-c:v libx265 -profile:v main -pix_fmt yuv420p -tag:v hvc1 hevc-aac.mkv
 
+# The same HEVC stream copied out of mov rather than encoded into Matroska, which is
+# how ffmpeg users actually make one. The mov carries a colr box, so this file's
+# Video element holds a Colour master element that the encoded one does not.
+"${FF[@]}" -i hevc-aac-8bit.mov -c copy "${EXACT[@]}" hevc-aac-copy.mkv
+
 # WebM, one file per codec the format allows. ffmpeg 9 here has no libvorbis, so the
 # Vorbis file uses the built-in encoder, which is marked experimental and so needs
 # -strict -2, and which refuses anything but stereo, hence -ac 2. It is byte-stable

@@ -212,7 +212,7 @@ func TestRemuxIntoWebMRefusesTheWrongCodecs(t *testing.T) {
 
 // matroskaSources are the corpus files whose codecs all fit an mp4, which is
 // what the Matroska-to-MP4 remux can be asked for.
-var matroskaSources = []string{"h264-aac.mkv", "hevc-aac.mkv", "h264-gop12.mkv", "vp9-opus.webm", "av1-opus.webm"}
+var matroskaSources = []string{"h264-aac.mkv", "hevc-aac.mkv", "hevc-aac-copy.mkv", "h264-gop12.mkv", "vp9-opus.webm", "av1-opus.webm"}
 
 // TestRemuxMatroskaIntoMP4 is the other direction of TestRemuxIntoMatroska: a
 // Matroska source into the MP4 family, which comes out fragmented because the
@@ -326,7 +326,7 @@ func TestRemuxMatroskaIntoMP4RefusesWhatMP4CannotHold(t *testing.T) {
 // TestRemuxMatroskaIntoMatroska is the fourth pairing: a Matroska source into a
 // Matroska output, which is a filtered copy of the source's own clusters.
 func TestRemuxMatroskaIntoMatroska(t *testing.T) {
-	for _, name := range []string{"h264-aac.mkv", "vp8-vorbis.webm", "av1-opus.webm"} {
+	for _, name := range []string{"h264-aac.mkv", "hevc-aac-copy.mkv", "vp8-vorbis.webm", "av1-opus.webm"} {
 		t.Run(name, func(t *testing.T) {
 			want := probeBytes(t, readCorpus(t, name))
 			got := probeBytes(t, remuxed(t, name, sprocket.MKV))
@@ -485,6 +485,35 @@ func inflatedMatroskaSource(size int64) (io.ReaderAt, int64) {
 		head,
 	)
 	return &countingReaderAt{prefix: prefix, size: int64(len(prefix)) + size}, int64(len(prefix)) + size
+}
+
+// TestTrimFFmpegCopiedHEVCMatroska is issue 43: an HEVC mkv that ffmpeg copied
+// out of a mov carries a Colour master element in its Video element, which the
+// track parser once read as an integer and refused. The one keyframe is at the
+// start, so the cut snaps back to zero.
+func TestTrimFFmpegCopiedHEVCMatroska(t *testing.T) {
+	for _, target := range []sprocket.Container{sprocket.MKV, sprocket.MP4} {
+		t.Run(string(target), func(t *testing.T) {
+			source := readCorpus(t, "hevc-aac-copy.mkv")
+
+			var out bytes.Buffer
+			actual, err := sprocket.Trim(bytes.NewReader(source), int64(len(source)), &out,
+				target, 500*time.Millisecond, 1500*time.Millisecond)
+			if err != nil {
+				t.Fatalf("trim: %v", err)
+			}
+			if actual != 0 {
+				t.Errorf("the cut begins at %v, want 0", actual)
+			}
+			info := probeBytes(t, out.Bytes())
+			if info.VideoCodec != "hevc" || info.AudioCodec != "aac" {
+				t.Errorf("codecs = %s/%s, want hevc/aac", info.VideoCodec, info.AudioCodec)
+			}
+			if info.Width != 128 || info.Height != 72 {
+				t.Errorf("dimensions = %dx%d, want 128x72", info.Width, info.Height)
+			}
+		})
+	}
 }
 
 // TestTrimIntoMatroska cuts an mp4 and writes the result as an mkv, which is

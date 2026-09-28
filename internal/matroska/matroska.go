@@ -413,17 +413,20 @@ func parseTrackEntry(body []byte) (*Track, error) {
 
 func (t *Track) parseVideo(body []byte) error {
 	return walk(body, 3, func(id uint32, child []byte) error {
-		value, err := readUint(child)
-		if err != nil {
-			return err
-		}
+		// Only the dimensions are read. The Video element also holds masters
+		// and floats, such as the Colour element ffmpeg writes out of a mov's
+		// colr box, and those are not integers.
+		var err error
+		var value uint64
 		switch id {
 		case idPixelWidth:
+			value, err = readUint(child)
 			t.Width = int(min(value, math.MaxInt32))
 		case idPixelHeight:
+			value, err = readUint(child)
 			t.Height = int(min(value, math.MaxInt32))
 		}
-		return nil
+		return err
 	})
 }
 
