@@ -30,8 +30,24 @@ var (
 	ErrNoVideo = errors.New("sprocket: no video track")
 )
 
+// Family names the container family a file was read as. Remux writes every
+// family into every target but two pairings, so a Family is what CanRemux needs
+// beyond the codecs to answer for a source.
+type Family string
+
+// The container families this library reads.
+const (
+	ISOBMFF  Family = "isobmff"
+	Matroska Family = "matroska"
+	MPEGTS   Family = "mpegts"
+)
+
 // Info is what Probe reports about a file. Every zero value is meaningful.
 type Info struct {
+	// Family is the container family the file was read as: ISOBMFF for the MP4
+	// family and MOV, Matroska for Matroska and WebM, MPEGTS for a transport
+	// stream.
+	Family Family
 	// Duration is the movie duration, which accounts for an edit list where the
 	// container carries one.
 	Duration time.Duration
@@ -97,7 +113,7 @@ func Probe(r io.ReaderAt, size int64) (Info, error) {
 }
 
 func probeISOBMFF(file *isobmff.File) Info {
-	info := Info{Duration: file.Duration()}
+	info := Info{Family: ISOBMFF, Duration: file.Duration()}
 	if video := file.VideoTrack(); video != nil {
 		info.Width = int(video.Width)
 		info.Height = int(video.Height)
@@ -115,7 +131,7 @@ func probeISOBMFF(file *isobmff.File) Info {
 // zero because Matroska carries no display matrix, which the package
 // documentation says under "Matroska and WebM".
 func probeMatroska(file *matroska.File) Info {
-	info := Info{Duration: file.Duration()}
+	info := Info{Family: Matroska, Duration: file.Duration()}
 	if video := file.VideoTrack(); video != nil {
 		info.Width = video.Width
 		info.Height = video.Height
@@ -132,7 +148,7 @@ func probeMatroska(file *matroska.File) Info {
 // measured by the scan the package documentation describes under "MPEG-TS".
 // Rotation is zero: the format has no display matrix.
 func probeTS(file *mpegts.File) Info {
-	info := Info{Duration: file.Duration(), FrameRate: file.FrameRate()}
+	info := Info{Family: MPEGTS, Duration: file.Duration(), FrameRate: file.FrameRate()}
 	if video := file.Video; video != nil {
 		info.Width, info.Height, info.VideoCodec = video.Width, video.Height, video.Codec
 	}

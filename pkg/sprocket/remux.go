@@ -40,13 +40,18 @@ const (
 // so an answer of true is not a guess about the codecs, and a Container this
 // library does not write reports false.
 //
+// It also reads info.Family against the same list of written pairings Remux
+// acts on, so a Matroska source into TS, or a TS source into Matroska, reports
+// false. An Info with no Family is answered for its codecs alone.
+//
 // It answers from an Info alone, so a caller can probe once and offer the
-// targets that will work. It speaks only for the codecs: a source this library
-// cannot write from, a fragmented file, still fails at Remux. Those are the
-// cases Remux documents, and they are not about the codec pair.
+// targets that will work. It speaks only for the codecs and the family: a
+// source this library cannot write from, a fragmented file, still fails at
+// Remux. Those are the cases Remux documents, and they are not about the pair.
 func CanRemux(info Info, target Container) bool {
 	container := isobmff.Target(target)
-	return isobmff.CodecFits(info.VideoCodec, container) &&
+	return written(info.Family, container) &&
+		isobmff.CodecFits(info.VideoCodec, container) &&
 		isobmff.CodecFits(info.AudioCodec, container)
 }
 
@@ -104,10 +109,10 @@ func writeInto(w io.Writer, file container, target Container, c cut) error {
 	tsTarget := out == isobmff.TargetTS
 
 	switch {
+	case !written(sourceFamily(file), out):
+		return fmt.Errorf("%w: no writer takes %s into %s", ErrUnsupportedContainer, sourceFamily(file), target)
 	case file.ts != nil && tsTarget:
 		return copyWhole(w, file.ts)
-	case file.ts != nil && matroskaTarget, file.mkv != nil && tsTarget:
-		return fmt.Errorf("%w: no writer takes %s into %s", ErrUnsupportedContainer, sourceFamily(file), target)
 	case file.ts != nil:
 		return writeError(mpegts.WriteFragmented(w, file.ts, out))
 	case tsTarget:
@@ -133,15 +138,29 @@ func copyWhole(w io.Writer, file *mpegts.File) error {
 	return nil
 }
 
-// sourceFamily names the family a parsed source belongs to, for an error.
-func sourceFamily(file container) string {
+// written reports whether a writer takes a source of this family into target.
+// It is the one list of pairings, which writeInto acts on and CanRemux reports,
+// so the two cannot disagree. The two cross-family pairings with no index on
+// either side are the ones not written.
+func written(family Family, target isobmff.Target) bool {
+	switch family {
+	case Matroska:
+		return target != isobmff.TargetTS
+	case MPEGTS:
+		return target != isobmff.TargetMKV && target != isobmff.TargetWebM
+	}
+	return true
+}
+
+// sourceFamily names the family a parsed source belongs to.
+func sourceFamily(file container) Family {
 	switch {
 	case file.mkv != nil:
-		return "Matroska"
+		return Matroska
 	case file.ts != nil:
-		return "MPEG-TS"
+		return MPEGTS
 	}
-	return "ISOBMFF"
+	return ISOBMFF
 }
 
 // writeError maps a muxer error onto this package's sentinels, for Remux and

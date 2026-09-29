@@ -274,22 +274,38 @@ func TestCanRemuxAgreesWithRemux(t *testing.T) {
 		t.Fatalf("list corpus: %v", err)
 	}
 
+	// A fragmented source is refused by what the file holds rather than by its
+	// family or its codecs, which an Info does not carry; the package
+	// documentation names it under "Remux compatibility".
+	const fragmented = "fragmented.mp4"
+
+	families := map[sprocket.Family]bool{}
 	for _, name := range names {
 		for _, target := range []sprocket.Container{
-			sprocket.MP4, sprocket.M4V, sprocket.ThreeGP, sprocket.MOV, sprocket.ThreeG2, sprocket.TS,
+			sprocket.MP4, sprocket.M4V, sprocket.ThreeGP, sprocket.MOV, sprocket.ThreeG2,
+			sprocket.MKV, sprocket.WebM, sprocket.TS,
 		} {
 			t.Run(name+"/"+string(target), func(t *testing.T) {
 				source := readCorpus(t, name)
-				allowed := sprocket.CanRemux(probeBytes(t, source), target)
+				info := probeBytes(t, source)
+				families[info.Family] = true
+				allowed := sprocket.CanRemux(info, target)
 
 				err := sprocket.Remux(bytes.NewReader(source), int64(len(source)), io.Discard, target)
 				switch {
-				case allowed && errors.Is(err, sprocket.ErrIncompatible):
+				case allowed && name == fragmented && errors.Is(err, sprocket.ErrIncompatible):
+					t.Errorf("CanRemux said yes and Remux returned %v", err)
+				case allowed && name != fragmented && err != nil:
 					t.Errorf("CanRemux said yes and Remux returned %v", err)
 				case !allowed && err == nil:
 					t.Error("CanRemux said no and Remux succeeded")
 				}
 			})
+		}
+	}
+	for _, family := range []sprocket.Family{sprocket.ISOBMFF, sprocket.Matroska, sprocket.MPEGTS} {
+		if !families[family] {
+			t.Errorf("corpus has no %s file, which this test has to exercise", family)
 		}
 	}
 }
