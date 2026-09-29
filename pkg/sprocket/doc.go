@@ -146,7 +146,8 @@
 //
 // Two pairings are not written: a Matroska source into a TS, and a TS into
 // Matroska. Neither has an index, and nothing is built yet to carry one
-// straight into the other; both return ErrUnsupportedContainer.
+// straight into the other; both return ErrUnsupportedContainer, and CanRemux
+// reports false for both from Info.Family.
 //
 // Trim does not take a TS source and returns ErrUnsupportedContainer. The
 // keyframe search above and the remux walk would make one, and it is left for
@@ -442,7 +443,9 @@
 // one: the format allows VP8, VP9, and AV1 video with Vorbis or Opus audio and
 // nothing else, so an H.264 file returns ErrIncompatible for it.
 //
-// The table speaks for the codecs and not for the source. A pairing it allows
+// The table speaks for the codecs. CanRemux also reads Info.Family against the
+// two source pairings "MPEG-TS" says are not written, from the same list Remux
+// acts on, and speaks for nothing else about the source. A pairing it allows
 // can still fail at Remux for a reason that is not about the codec: a
 // fragmented source, a laced Matroska block, or a source whose codec
 // configuration this library cannot translate into the target's own form. Those
