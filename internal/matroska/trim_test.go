@@ -45,7 +45,8 @@ func shownAt(t *testing.T, what string, shown []int64) (position int, before int
 
 // blockTimes walks a written Matroska file and returns the time each block of
 // every track is shown at, on the file's own scale: its timestamp less the
-// track's CodecDelay, which is what a player subtracts.
+// track's CodecDelay, which is what a player subtracts and what the reader
+// subtracts too.
 func blockTimes(t *testing.T, out []byte) (*File, map[uint64][]int64) {
 	t.Helper()
 
@@ -53,14 +54,10 @@ func blockTimes(t *testing.T, out []byte) (*File, map[uint64][]int64) {
 	if err != nil {
 		t.Fatalf("reparse the cut: %v", err)
 	}
-	delay := map[uint64]int64{}
-	for _, track := range file.Tracks {
-		delay[track.Number] = int64((track.CodecDelay + file.TimestampScale/2) / file.TimestampScale)
-	}
 	times := map[uint64][]int64{}
 	if err := file.eachCluster(func(payload span, _ int64) error {
 		return file.eachBlock(payload, func(b block) error {
-			times[b.track] = append(times[b.track], b.ticks-delay[b.track])
+			times[b.track] = append(times[b.track], b.ticks)
 			return nil
 		})
 	}); err != nil {
@@ -122,31 +119,39 @@ func TestTrimSpanHidesTheLeadIn(t *testing.T) {
 
 	t.Run("mp4", func(t *testing.T) {
 		out, raw := writeFragmented(t, src, &cut)
-		for _, track := range out.Tracks {
-			if len(track.Edits) != 1 {
-				t.Fatalf("the %s track's edit list is %+v, want one entry", track.Handler, track.Edits)
+		assertFragmentedStartsAtTheRequestedFrame(t, out, raw)
+	})
+}
+
+// assertFragmentedStartsAtTheRequestedFrame is assertStartsAtTheRequestedFrame
+// for a fragmented output, whose lead-in the edit list hides.
+func assertFragmentedStartsAtTheRequestedFrame(t *testing.T, out *isobmff.File, raw []byte) {
+	t.Helper()
+
+	for _, track := range out.Tracks {
+		if len(track.Edits) != 1 {
+			t.Fatalf("the %s track's edit list is %+v, want one entry", track.Handler, track.Edits)
+		}
+		// The fragments are on the source's millisecond scale, so the
+		// presentation the edit list leaves is in milliseconds too.
+		skip := track.Edits[0].MediaTime
+		var shown []int64
+		for _, s := range trunSamples(t, raw, track.ID) {
+			shown = append(shown, int64(s.decode)+s.comp-skip)
+		}
+		position, before := shownAt(t, track.Handler, shown)
+		switch track.Handler {
+		case "vide":
+			if position != sparseFrame || before != sparseBefore {
+				t.Errorf("frame %d, begun %dms before, is on screen at zero, want frame %d begun %dms before",
+					position, before, sparseFrame, sparseBefore)
 			}
-			// The fragments are on the source's millisecond scale, so the
-			// presentation the edit list leaves is in milliseconds too.
-			skip := track.Edits[0].MediaTime
-			var shown []int64
-			for _, s := range trunSamples(t, raw, track.ID) {
-				shown = append(shown, int64(s.decode)+s.comp-skip)
-			}
-			position, before := shownAt(t, track.Handler, shown)
-			switch track.Handler {
-			case "vide":
-				if position != sparseFrame || before != sparseBefore {
-					t.Errorf("frame %d, begun %dms before, is on screen at zero, want frame %d begun %dms before",
-						position, before, sparseFrame, sparseBefore)
-				}
-			case "soun":
-				if before >= audioFrameTicks {
-					t.Errorf("the audio on at zero began %dms before it, want under one %dms frame", before, audioFrameTicks)
-				}
+		case "soun":
+			if before >= audioFrameTicks {
+				t.Errorf("the audio on at zero began %dms before it, want under one %dms frame", before, audioFrameTicks)
 			}
 		}
-	})
+	}
 }
 
 func TestTrimSpanSnapsWhereTheLeadInCannotBeHidden(t *testing.T) {

@@ -2,6 +2,7 @@ package matroska
 
 import (
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,6 +77,16 @@ func FuzzParse(f *testing.F) {
 		))),
 	))
 	f.Add(segment("webm", info(0, -1), elem(idTracks, videoTrack(1, "V_AV1", 1<<40, 1<<40, 0))))
+	// A CodecDelay past anything a timestamp can hold, which every time the
+	// reader reports is taken off.
+	f.Add(segment("matroska",
+		info(1, 2000),
+		elem(idTracks, elem(idTrackEntry, concat(
+			uintElem(idTrackNumber, 1), uintElem(idTrackType, trackVideo),
+			elem(idCodecID, []byte("V_VP8")), uintElem(idCodecDelay, math.MaxUint64),
+		))),
+		cluster(0, simpleBlock(1, 0, true, []byte("frame"))),
+	))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		file, err := Parse(readerAt(data), int64(len(data)))

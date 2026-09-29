@@ -183,7 +183,19 @@ func newFragSource(src *File, span TrimSpan) (*fragSource, error) {
 // describes, onto the output's media timeline. A source whose scale divides a
 // second, which every real file has, comes through unchanged.
 func (s *fragSource) tick(track uint64, ticks int64) int64 {
-	return s.span.rebase(track, ticks) * int64(s.src.TimestampScale) / s.nanosPerTick
+	return (s.span.rebase(track, ticks) + s.carried(track)) * int64(s.src.TimestampScale) / s.nanosPerTick
+}
+
+// carried is the CodecDelay a whole-file write puts back on a track, in source
+// ticks. The reader takes it off, which leaves what it hid before zero, where a
+// decode time cannot go, so it goes back on and the edit list skips it. A cut
+// is rebased onto its first block and carries nothing: its edit list skips the
+// lead-in alone.
+func (s *fragSource) carried(track uint64) int64 {
+	if s.span.First[track] != math.MinInt64 {
+		return 0
+	}
+	return s.src.delayOf(track)
 }
 
 // outputDuration is how long the output runs. A whole-file write keeps the
@@ -231,8 +243,9 @@ func (s *fragSource) prime() error {
 		state.delay = lead
 		// A cut's lead-in is hidden the same way: each track decodes
 		// from zero on its own first block, and the edit list starts it that
-		// much further in, where the cut is shown from.
-		hidden := s.span.lead(state.number) * int64(s.src.TimestampScale) / s.nanosPerTick
+		// much further in, where the cut is shown from. What carried put
+		// back is skipped the same way.
+		hidden := (s.span.lead(state.number) + s.carried(state.number)) * int64(s.src.TimestampScale) / s.nanosPerTick
 		s.tracks[i].EditDelay = uint64(lead + hidden)
 	}
 	return nil

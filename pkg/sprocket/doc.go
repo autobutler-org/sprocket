@@ -43,7 +43,7 @@
 // # Matroska and WebM
 //
 // One parser covers both, and so does the writer: they differ by the document
-// type in their header and by what codecs they are allowed to carry. Three
+// type in their header and by what codecs they are allowed to carry. Four
 // things about the family are worth knowing before reading a result from one.
 //
 // Rotation is always 0. Matroska has no display matrix, so there is nothing for
@@ -67,6 +67,15 @@
 // equivalent here short of reading to the last block, so a Matroska file that
 // declares no duration reports zero, and with it a bitrate and a measured frame
 // rate of zero.
+//
+// Times are the ones a player shows. A track's CodecDelay, RFC 9559 section
+// 5.1.4.1.25, is subtracted from every timestamp of the track, as ffmpeg
+// subtracts it: an AAC encoder's priming or an Opus encoder's pre-skip puts the
+// audio's first frame a few milliseconds before zero, and the lead-in a Trim
+// hides puts the video's keyframe before it too. Thumbnail and Trim take their
+// times on that timeline, so a cut of a cut shows what the same cut of the
+// source shows. Remux carries a delay across rather than applying it again:
+// into Matroska as the same CodecDelay, into the MP4 family as an edit list.
 //
 // Writing one is single-pass. The segment declares an unknown size and the seek
 // index goes at the end, both of which the format allows, so the header can go
@@ -241,9 +250,8 @@
 //     the lead-in's blocks before zero was the other candidate, and it is not
 //     used: a block timestamp is signed but a cluster's is not, and ffmpeg
 //     reads a block that lands before zero as having no timestamp at all.
-//     This library reads block timestamps as stored and does not
-//     subtract CodecDelay either, so a Thumbnail or a second Trim of a
-//     Matroska cut is measured on its stored timeline, lead-in included.
+//     This library subtracts CodecDelay on every track too, so a Thumbnail or
+//     a second Trim of a Matroska cut is measured from where the cut is shown.
 //   - TS has no way to hide a frame, so a cut into one shows its lead-in, and
 //     Trim returns the keyframe's time rather than the start.
 //
