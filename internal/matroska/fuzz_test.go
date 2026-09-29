@@ -97,7 +97,7 @@ func FuzzParse(f *testing.F) {
 		_ = Copy(io.Discard, file, isobmff.TargetMKV, nil)
 		_ = WriteFragmented(io.Discard, file, isobmff.TargetMP4, nil)
 
-		cut, _, err := file.TrimSpan(time.Second, 2*time.Second)
+		cut, _, err := file.TrimSpan(1300*time.Millisecond, 2*time.Second)
 		if err != nil {
 			return
 		}

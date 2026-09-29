@@ -2,7 +2,8 @@
 //
 // Probe reports duration, dimensions, codecs, bitrate, framerate, and rotation.
 // Thumbnail decodes the keyframe nearest a requested time to an image.Image.
-// Trim cuts a range at keyframe boundaries by copying streams. Remux moves the
+// Trim cuts a range by copying streams from the keyframe before it and hiding
+// the frames ahead of the start. Remux moves the
 // same streams into a different container. Trim and Remux never re-encode.
 //
 // Guarantees:
@@ -199,37 +200,87 @@
 // decoded and nothing is re-encoded, which is what fixes where a cut can
 // begin.
 //
-// The start snaps back to the keyframe at or before it. Frames between two
-// keyframes are coded against their neighbours, so a cut that began between
-// them would have to re-encode everything up to the next one, and re-encoding
-// is a non-goal. Trim returns the time the output actually begins at, on the
-// source's timeline, and that is the number to label the result with. A
-// negative start reads as zero, a start past the end of the file takes the last
-// keyframe, and a file whose first keyframe is not its first frame begins at
-// that first keyframe rather than failing: the nearest range that decodes beats
-// no range at all.
+// The video is copied from the keyframe at or before the start. Frames between
+// two keyframes are coded against their neighbors, so a cut that began
+// decoding between them would have to re-encode everything up to the next one,
+// and re-encoding is a non-goal. The frames from that keyframe to the start
+// are the cut's lead-in, and the output carries them and hides them, so the
+// first frame shown is the one the source shows at the start. On a source with
+// a keyframe every few seconds, which is what phones and screen recorders
+// write, that is the difference between the clip that was asked for and one
+// that starts seconds early. The price is the lead-in's bytes, at most a GOP.
+//
+// How the lead-in is hidden depends on the target:
+//
+//   - MP4, M4V, 3GP, 3G2, and MOV get an edit list per track, whose media time
+//     skips the lead-in on that track's own timescale, after the composition
+//     offsets are normalized as "Trim timestamps" describes. An audio track's
+//     list skips the part of its first frame that falls before the start, so
+//     the audio begins at the same instant the picture does. A player that
+//     follows ISO/IEC 14496-12 honors the list, QuickTime and ffmpeg among
+//     them, and one that ignores edit lists shows the lead-in. ffmpeg drops a
+//     frame that begins before the edit even when it is still on screen at
+//     the start, so there the first frame shown is the next one, as it is for
+//     ffmpeg's own -ss with -c copy.
+//   - A fragmented output, which is what the MP4 family gets from a Matroska
+//     source, carries the same edit list in its movie header. ffmpeg reads the
+//     list of a fragmented file as a shift rather than a cut, so there the
+//     lead-in comes out at negative times, decoded but before zero, rather
+//     than dropped.
+//   - Matroska and WebM have no edit list. Each track's lead-in is declared as
+//     its CodecDelay, which RFC 9559 section 5.1.4.1.25 says a player
+//     subtracts from every timestamp of the track before showing it, and the
+//     stored timestamps stay at or after zero, where every reader can take
+//     them. A source track's own CodecDelay, an Opus encoder's pre-skip, is
+//     added to it. ffmpeg honors CodecDelay on every track: the lead-in comes
+//     out at negative times, and an audio track's is skipped by the decoder.
+//     CodecDelay is written by most muxers for Opus audio only, so a player
+//     may read it only there; one that ignores it on a video track shows the
+//     video's lead-in, and the clip plays from the keyframe, the way it did
+//     before the lead-in was hidden, still in sync with its audio. Stamping
+//     the lead-in's blocks before zero was the other candidate, and it is not
+//     used: a block timestamp is signed but a cluster's is not, and ffmpeg
+//     reads a block that lands before zero as having no timestamp at all.
+//     This library reads block timestamps as stored and does not
+//     subtract CodecDelay either, so a Thumbnail or a second Trim of a
+//     Matroska cut is measured on its stored timeline, lead-in included.
+//   - TS has no way to hide a frame, so a cut into one shows its lead-in, and
+//     Trim returns the keyframe's time rather than the start.
+//
+// Trim returns the time the output is shown from, on the source's timeline,
+// and that is the number to label the result with: the requested start where
+// the lead-in is hidden, the keyframe's time where it is not. There is nothing
+// to hide, and the keyframe's time comes back, for a start on a keyframe, a
+// start past the end of the file, which takes the last keyframe, and a file
+// whose first keyframe is not its first frame, which begins at that first
+// keyframe rather than failing: the nearest range that decodes beats no range
+// at all. A negative start reads as zero.
 //
 // The end has no such constraint and takes the last sample at or before it. An
 // end past the end of the file keeps the rest of it, and an end at or before
-// the start keeps the single sample the start snapped to, so a cut always holds
-// a frame.
+// the start keeps the single sample the keyframe landed on and hides nothing,
+// so a cut always holds a frame.
 //
 // Every track is cut against the same window, and each lands on its own sample
 // boundaries. An audio frame is not a video frame: at 48 kHz an AAC frame is
 // about 21 milliseconds, so an audio track may carry up to one frame of sound
-// from before the video's first frame, and up to one after its last. Trim keeps
-// the frame that straddles the start rather than the one after it, since a
-// track that began late would be silent where the video is not, and that frame
-// of lead is the residual error against the video: closing it exactly would
-// mean re-encoding the audio. A track that declares keyframes of its own, which
-// audio rarely does, snaps back to one the way the video track does. A file
-// with no audio, or with several audio tracks, is cut the same way; a timecode
-// or subtitle track is dropped, as it is by Remux.
+// from before the start, and up to one after the end. Trim keeps the frame that
+// straddles the start rather than the one after it, since a track that began
+// late would be silent where the video is not. Where the lead-in is hidden,
+// that frame's part before the start is hidden with it; where it is not, that
+// frame of lead is the residual error against the video, and closing it
+// exactly would mean re-encoding the audio. A track that declares keyframes of
+// its own, which audio rarely does, snaps back to one the way the video track
+// does. A file with no audio, or with several audio tracks, is cut the same
+// way; a timecode or subtitle track is dropped, as it is by Remux. A file with
+// no video has no keyframe grid, so nothing is hidden and each track starts on
+// the frame covering the start.
 //
 // # Trim timestamps
 //
-// The output's timestamps are rewritten, not shifted with an edit list, and the
-// source's edit list is dropped rather than carried across.
+// The output's timestamps are rewritten, not shifted with the source's edit
+// list, which is dropped rather than carried across. The only edit list a cut
+// carries is the one "Trim" describes, which hides its lead-in.
 //
 // The sample tables make this nearly free. stts holds durations rather than
 // absolute times, so cutting it at the first kept sample leaves that sample
@@ -249,27 +300,31 @@
 // table is written in its signed form, which is what version 1 of the box is
 // for.
 //
-// The tradeoff behind rewriting rather than writing an edit list is worth
-// stating. An edit list preserves the source's timing exactly and lets a player
-// trim the pre-roll itself; rewriting survives players that ignore edit lists,
-// which many do. Rewriting wins here because the pre-roll question does not
-// arise: the output already starts on a keyframe, so there is nothing before
-// its first frame to trim away, and the normalized offsets carry the rest.
+// The tradeoff behind rewriting rather than carrying the source's edit list is
+// worth stating. An edit list preserves the source's timing exactly and lets a
+// player trim the pre-roll itself; rewriting survives players that ignore edit
+// lists, which some do. Rewriting wins for everything but the lead-in: the
+// output starts decoding on a keyframe, so the codec's pre-roll is gone with
+// the cut, and the normalized offsets carry the rest. A cut that starts on a
+// keyframe carries no edit list at all, and one that hides a lead-in carries a
+// single entry per track that a player ignoring it would show the lead-in
+// past.
 //
-// What is left is the sample grid. An audio track's first frame is the one the
-// cut landed on rather than the instant it asked for, so its sound sits up to
-// one frame, about 21 milliseconds for AAC at 48 kHz, from where the source had
-// it. Closing that would mean re-encoding. Probe reports the output's own
-// duration, which is the samples it kept rather than the window that was asked
-// for.
+// What is left is the sample grid. Where no lead-in is hidden, an audio track's
+// first frame is the one the cut landed on rather than the instant it asked
+// for, so its sound sits up to one frame, about 21 milliseconds for AAC at 48
+// kHz, from where the source had it. Closing that would mean re-encoding.
+// Probe reports the output's own duration, which is the samples it kept less
+// any hidden lead-in, rather than the window that was asked for.
 //
 // A Matroska source is cut the same way, against a window of timestamps rather
 // than a range of sample numbers, since a file with no sample table has no
-// sample numbers to name. The start snaps back to the keyframe the Cues index
-// or a cluster walk finds at or before it, every other track begins at its own
-// last block at or before that, and each track is rebased onto its own first
-// block, so every track begins at zero with the same one-frame residual the
-// MP4 family has. Writing one into the MP4 family produces a fragmented file,
+// sample numbers to name. The video begins on the keyframe the Cues index or a
+// cluster walk finds at or before the start, every other track begins at its
+// own last block at or before the instant the cut is shown from, and each
+// track is rebased onto its own first block, so every track's stored
+// timestamps begin at zero and its lead-in, if any, is hidden as "Trim"
+// describes. Writing one into the MP4 family produces a fragmented file,
 // exactly as a remux does.
 //
 // A fragmented source is not trimmed, for the reason Remux does not remux one:

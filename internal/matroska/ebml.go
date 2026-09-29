@@ -58,6 +58,7 @@ const (
 	idCodecPrivate  = 0x63A2
 	idFlagLacing    = 0x9C
 	idDefaultDur    = 0x23E383
+	idCodecDelay    = 0x56AA
 	idVideo         = 0xE0
 	idPixelWidth    = 0xB0
 	idPixelHeight   = 0xBA

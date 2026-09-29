@@ -136,6 +136,11 @@ type Track struct {
 	// Lacing is FlagLacing: the track's blocks may pack several frames into
 	// one. RFC 9559 section 5.1.4.1.9.
 	Lacing bool
+	// CodecDelay is the nanoseconds a player subtracts from every timestamp
+	// of the track before showing it, RFC 9559 section 5.1.4.1.25: an Opus
+	// encoder's pre-skip, or a cut's hidden lead-in. It is carried across by
+	// Copy and not applied to the times this package reports.
+	CodecDelay uint64
 }
 
 // Parse reads the structure of a Matroska file. It reads the EBML header, the
@@ -389,6 +394,8 @@ func parseTrackEntry(body []byte) (*Track, error) {
 			t.CodecPrivate = child
 		case idDefaultDur:
 			t.DefaultDuration, err = readUint(child)
+		case idCodecDelay:
+			t.CodecDelay, err = readUint(child)
 		case idFlagLacing:
 			var flag uint64
 			flag, err = readUint(child)

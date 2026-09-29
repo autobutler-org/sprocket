@@ -15,7 +15,10 @@ import (
 // cut is the window to keep, which TrimSpan picks; a nil cut writes the file
 // whole. A cut output's timestamps start at zero, as they do on the ISOBMFF
 // side, each track rebased onto its own first block as TrimSpan.rebase
-// describes.
+// describes. A cut with a Lead also declares each track's lead-in as its
+// CodecDelay, which a player subtracts from every timestamp of the track
+// before showing it: Matroska has no edit list, and that is the element the
+// format has for a track whose first frames come before its start.
 //
 // The output follows the source's own cluster boundaries rather than
 // re-grouping, so what is held at once is one cluster's block descriptors and
@@ -79,6 +82,7 @@ func copiedTracks(src *File, target isobmff.Target, span TrimSpan) ([]*outTrack,
 			defaultDuration: t.DefaultDuration,
 			width:           uint64(max(t.Width, 0)), height: uint64(max(t.Height, 0)),
 			sampleRate: t.SampleRate, channels: t.Channels, lacing: t.Lacing,
+			codecDelay: t.CodecDelay + uint64(span.lead(t.Number))*src.TimestampScale,
 		})
 	}
 	if len(out) == 0 {

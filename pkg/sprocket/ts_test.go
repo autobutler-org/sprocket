@@ -367,7 +367,9 @@ func TestTrimIntoTS(t *testing.T) {
 	// cut keeps the frames decoded by the end, which in a reordered stream
 	// include a couple shown after it; an mp4 counts decode durations
 	// instead. The two agree to those frames.
-	mp4, _ := trimmedInto(t, gop12, sprocket.MP4, 1200*time.Millisecond, 2400*time.Millisecond)
+	// The mp4 is cut from the keyframe itself, since from 1.2 it would hide
+	// the lead-in the stream shows.
+	mp4, _ := trimmedInto(t, gop12, sprocket.MP4, actual, 2400*time.Millisecond)
 	got, want := probeBytes(t, out), probeBytes(t, mp4)
 	if diff := got.Duration - want.Duration; diff < -oneFrame || diff > 3*oneFrame {
 		t.Errorf("duration = %v, want about the mp4 cut's %v", got.Duration, want.Duration)

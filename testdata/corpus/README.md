@@ -5,13 +5,14 @@ every public function has something to test against.
 
 Every file is two seconds of the same synthetic content: a 128x72 `testsrc2` pattern
 at 24 fps and a 440 Hz `sine` tone. 128x72 is not square on purpose, so a rotated
-file is distinguishable from its stored dimensions. Four files are exceptions:
+file is distinguishable from its stored dimensions. Six files are exceptions:
 `prores-pcm.mov` is a quarter of a second, because ProRes is an intra codec and costs
-orders of magnitude more per frame than the rest, and `h264-gop12.mp4`,
+orders of magnitude more per frame than the rest, `h264-gop12.mp4`,
 `h264-gop12.mkv`, and `h264-gop12.ts` are three seconds, because a trim needs room
-for more than one keyframe. The twenty-one media files total 527,204 bytes, of which
-the four MPEG-TS files are 139,572; the directory including the goldens and the
-script is 660 KB on disk.
+for more than one keyframe, and `h264-gop72.mp4` and `h264-gop72.mkv` are four,
+because their GOP is three seconds long. The twenty-four media files total 615,551
+bytes, of which the four MPEG-TS files are 139,572; the directory including the
+goldens and the script is 764 KB on disk.
 
 ## Files
 
@@ -20,6 +21,8 @@ script is 660 KB on disk.
 | `h264-aac.mp4` | H.264 + AAC in mp4, and the `moov`-at-the-end case, which is the mp4 muxer's default |
 | `h264-aac-faststart.mp4` | the same content with `moov` moved to the front |
 | `h264-gop12.mp4` | three seconds with a keyframe every twelve frames, at 0, 0.5, 1.0, 1.5, 2.0, and 2.5 seconds: the file a trim can snap to a keyframe other than the first |
+| `h264-gop72.mp4` | four seconds with keyframes at 0 and 3 seconds only, the sparse GOP a phone or a screen recorder writes: a trim starting at 1.969 seconds has only the keyframe at zero to copy from, so it shows whether the lead-in is hidden |
+| `h264-gop72.mkv` | the Matroska twin of `h264-gop72.mp4` |
 | `hevc-aac-8bit.mov` | HEVC + AAC in mov, 8-bit, `hvc1` sample entry |
 | `hevc-aac-10bit.mov` | HEVC + AAC in mov, 10-bit (`main10`, `yuv420p10le`) |
 | `rotate-90.mp4` | a `tkhd` matrix of 90 degrees clockwise |

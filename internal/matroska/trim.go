@@ -16,10 +16,13 @@ type TrimSpan struct {
 	// Last is the timestamp of the last block any track keeps. A block at
 	// exactly First is kept whatever this says, so a cut always holds a frame.
 	Last int64
-	// Origin is where the cut begins: the video keyframe it snapped to, or the
-	// requested start in a file with no video. The output's duration is
-	// measured from it.
+	// Origin is where the cut is shown from: the requested start where Lead is
+	// set, and otherwise the video keyframe it snapped to, or the requested
+	// start in a file with no video. The output's duration is measured from it.
 	Origin int64
+	// Lead is how far before Origin the video's keyframe sits: the lead-in the
+	// cut keeps so the frames after it decode, and hides. Zero hides nothing.
+	Lead int64
 }
 
 // rebase moves a kept block's timestamp onto the output's timeline. Each track
@@ -47,6 +50,15 @@ func (s TrimSpan) keeps(track uint64, ticks int64) bool {
 	return ticks == first || (ticks > first && ticks <= s.Last)
 }
 
+// lead is how far a track's first kept block sits before Origin, in the
+// source's ticks, which is what a writer hides: zero unless the cut has a Lead.
+func (s TrimSpan) lead(track uint64) int64 {
+	if first := s.First[track]; s.Lead > 0 && first != math.MinInt64 {
+		return max(s.Origin-first, 0)
+	}
+	return 0
+}
+
 // whole is the span that keeps every block of every track, which is what a
 // remux asks for.
 func whole(tracks []*Track) TrimSpan {
@@ -60,38 +72,60 @@ func whole(tracks []*Track) TrimSpan {
 }
 
 // TrimSpan picks the window a cut between start and end keeps, and reports the
-// presentation time the cut actually begins at.
+// presentation time the cut is shown from.
 //
-// start snaps back to the video track's keyframe at or before it, for the
-// reason the ISOBMFF side snaps: a cut cannot begin mid-GOP without
-// re-encoding. A start past the end of the file takes the last keyframe, a file
-// whose first keyframe comes later snaps forward to it, and a negative start
-// reads as zero. A file with no video track anchors on the requested time
-// itself, since there is no keyframe grid to land on.
+// The video begins on its keyframe at or before start, for the reason the
+// ISOBMFF side does: a cut cannot begin mid-GOP without re-encoding. A start
+// past the end of the file takes the last keyframe, a file whose first keyframe
+// comes later snaps forward to it, and a negative start reads as zero. A file
+// with no video track anchors on the requested time itself, since there is no
+// keyframe grid to land on.
 //
-// Every other track begins at its own last block at or before that anchor, so
-// an audio track carries up to one frame of sound from before the video's first
-// frame rather than starting late. Finding those costs one walk of the cluster
-// headers, which is what a file with no sample table leaves.
+// The blocks between that keyframe and start are the cut's lead-in, which the
+// span's Lead measures: Origin is start, the writers hide the lead-in behind a
+// CodecDelay or an edit list, and the reported time is start. Where there is
+// nothing to hide, a start on a keyframe, past the last video block, or at or
+// after end, Origin is the keyframe and so is the reported time.
+//
+// Every other track begins at its own last block at or before Origin, so an
+// audio track carries up to one frame of sound from before it rather than
+// starting late. Finding those costs one walk of the cluster headers, which is
+// what a file with no sample table leaves.
 //
 // The end takes the last block at or before it, with no snapping constraint,
 // and an end at or before the start keeps the single block each track began on.
 func (f *File) TrimSpan(start, end time.Duration) (TrimSpan, time.Duration, error) {
-	anchor, err := f.trimAnchor(max(start, 0))
+	start = max(start, 0)
+	anchor, err := f.trimAnchor(start)
 	if err != nil {
 		return TrimSpan{}, 0, err
 	}
 
-	cut := TrimSpan{First: map[uint64]int64{}, Last: max(f.durationTicks(end), anchor), Origin: anchor}
+	var (
+		video = f.VideoTrack()
+		want  = f.durationTicks(start)
+		// Each track's last block at or before the keyframe and at or before
+		// the start, since which one it begins on depends on whether the start
+		// turns out to be inside the file, and the walk is what says so.
+		atAnchor  = map[uint64]int64{}
+		atStart   = map[uint64]int64{}
+		lastVideo = int64(math.MinInt64)
+	)
 	for _, t := range f.Tracks {
 		if t.Type == trackVideo || t.Type == trackAudio {
-			cut.First[t.Number] = math.MinInt64
+			atAnchor[t.Number], atStart[t.Number] = math.MinInt64, math.MinInt64
 		}
 	}
 	if err := f.eachCluster(func(payload span, _ int64) error {
 		return f.eachBlock(payload, func(b block) error {
-			if at, ok := cut.First[b.track]; ok && b.ticks <= anchor && b.ticks > at {
-				cut.First[b.track] = b.ticks
+			if at, ok := atAnchor[b.track]; ok && b.ticks <= anchor && b.ticks > at {
+				atAnchor[b.track] = b.ticks
+			}
+			if at, ok := atStart[b.track]; ok && b.ticks <= want && b.ticks > at {
+				atStart[b.track] = b.ticks
+			}
+			if video != nil && b.track == video.Number {
+				lastVideo = max(lastVideo, b.ticks)
 			}
 			return nil
 		})
@@ -99,14 +133,20 @@ func (f *File) TrimSpan(start, end time.Duration) (TrimSpan, time.Duration, erro
 		return TrimSpan{}, 0, err
 	}
 
-	// A track with no block at or before the anchor begins at its first block
-	// after it, which is what the anchor itself selects.
+	cut := TrimSpan{First: atAnchor, Last: max(f.durationTicks(end), anchor), Origin: anchor}
+	if video != nil && want > anchor && start < end && want <= lastVideo {
+		cut.First, cut.Origin, cut.Lead = atStart, want, want-anchor
+		cut.First[video.Number] = anchor
+	}
+
+	// A track with no block at or before the origin begins at its first block
+	// after it, which is what the origin itself selects.
 	for track, at := range cut.First {
 		if at == math.MinInt64 {
-			cut.First[track] = anchor
+			cut.First[track] = cut.Origin
 		}
 	}
-	return cut, f.ticks(float64(anchor)), nil
+	return cut, f.ticks(float64(cut.Origin)), nil
 }
 
 // trimAnchor is the timestamp a cut begins at: the video keyframe at or before

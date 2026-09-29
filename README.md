@@ -95,18 +95,23 @@ start, err := sprocket.Trim(file, stat.Size(), out, sprocket.MP4, 30*time.Second
 if err != nil {
 	return err
 }
-fmt.Println(start) // where the cut really begins, which is the keyframe at or before 30s
+fmt.Println(start) // where the cut is shown from: 30s, or the keyframe before it into a TS
 ```
 
-`Trim` copies a range of samples into a new file without re-encoding. The start
-snaps back to the keyframe at or before it, because a cut cannot begin mid-GOP
-without re-encoding, so the returned time is the one to label the result with;
-the end takes the last sample at or before it. Every track is cut against the
-same window on its own sample boundaries, so audio lands within one frame of the
-video, about 21 ms for AAC at 48 kHz. Timestamps are rewritten rather than
-expressed as an edit list: the source's edit list is dropped and the composition
-offsets are normalized in its place, so the output is displayed from its first
-frame on any player. The package documentation writes out what that trades away.
+`Trim` copies a range of samples into a new file without re-encoding. A cut
+cannot begin decoding mid-GOP without re-encoding, so the video is copied from
+the keyframe at or before the start, and the frames between that keyframe and
+the start are hidden: behind an edit list in the MP4 family, and behind a
+`CodecDelay` in Matroska and WebM. The first frame shown is the one at the
+requested start, and that is the time returned. A TS output cannot hide frames,
+so it shows them and returns the keyframe's time; the returned time is the one
+to label the result with either way. Player support for the two mechanisms
+differs, and the package documentation under "Trim" has the details. The end
+takes the last sample at or before it. Every track is cut against the same
+window on its own sample boundaries, so audio lands within one frame of the
+video, about 21 ms for AAC at 48 kHz, and closer where the lead-in is hidden.
+The source's edit list is dropped and the composition offsets are normalized in
+its place. The package documentation writes out what that trades away.
 Payload moves as byte ranges, so
 cutting ten seconds out of a 4 GiB file costs the same heap as cutting them out
 of a small one.
@@ -144,7 +149,7 @@ Four operations:
 
 - Probe: duration, width, height, video codec, audio codec, bitrate, framerate, rotation.
 - Thumbnail: the keyframe nearest a requested time, decoded to an `image.Image`.
-- Trim: cut a range at keyframe boundaries by stream copy.
+- Trim: cut a range by stream copy, hiding the frames between the keyframe and the start.
 - Remux: move the same streams into a different container. MOV to MP4 is the headline case.
 
 These are container operations. A container is bookkeeping: boxes, sample tables,

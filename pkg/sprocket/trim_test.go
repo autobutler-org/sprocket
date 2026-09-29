@@ -72,23 +72,23 @@ func closeTo(t *testing.T, what string, got, want time.Duration) {
 	}
 }
 
-func TestTrimSnapsBackToTheKeyframe(t *testing.T) {
+func TestTrimCopiesFromTheKeyframeBeforeTheStart(t *testing.T) {
 	// The keyframes sit at 0, 0.5, 1.0, 1.5, 2.0, and 2.5 seconds, so a cut
-	// asked for at 1.3 has to come back at 1.0 rather than mid-GOP.
+	// asked for at 1.3 has to copy from 1.0 rather than mid-GOP, and hides the
+	// frames between the two behind an edit list.
 	out, actual := trimmed(t, gop12, 1300*time.Millisecond, 2200*time.Millisecond)
 
-	closeTo(t, "actual start", actual, time.Second)
+	closeTo(t, "actual start", actual, 1300*time.Millisecond)
 
 	// 29 video samples: the keyframe at 1.0s and the 1.2s asked for after it,
-	// which lands inside the sample starting at 2.166s.
+	// which lands inside the sample starting at 2.166s. What plays is the
+	// 0.9s from the start that was asked for, to the end of the audio frame
+	// playing at 2.2s, which runs a little past the last video frame.
 	file := demux(t, out)
 	if got := trackOf(t, file, "vide").SampleCount(); got != 29 {
 		t.Errorf("video holds %d samples, want 29", got)
 	}
-	if got := trackOf(t, file, "soun").SampleCount(); got != 57 {
-		t.Errorf("audio holds %d samples, want 57", got)
-	}
-	closeTo(t, "duration", probeBytes(t, out).Duration, 1216*time.Millisecond)
+	closeTo(t, "duration", probeBytes(t, out).Duration, 918646*time.Microsecond)
 
 	// Everything that is not the cut has to survive it.
 	source, cut := probeBytes(t, readCorpus(t, gop12)), probeBytes(t, out)
@@ -104,7 +104,8 @@ func TestTrimSnapsBackToTheKeyframe(t *testing.T) {
 }
 
 func TestTrimOutputStartsAtItsFirstFrame(t *testing.T) {
-	out, _ := trimmed(t, gop12, 1300*time.Millisecond, 2200*time.Millisecond)
+	// A cut that starts on a keyframe has no lead-in to hide.
+	out, _ := trimmed(t, gop12, time.Second, 2200*time.Millisecond)
 	file := demux(t, out)
 
 	sample, err := file.ReadSyncSample(0)
@@ -125,7 +126,8 @@ func TestTrimOutputStartsAtItsFirstFrame(t *testing.T) {
 	}
 
 	// The source's edit list described a timeline the cut no longer has, so it
-	// is dropped rather than carried across.
+	// is dropped rather than carried across, and a cut on a keyframe needs no
+	// list of its own.
 	for _, track := range file.Tracks {
 		if len(track.Edits) != 0 {
 			t.Errorf("%s track carries an edit list: %+v", track.Handler, track.Edits)
@@ -134,14 +136,16 @@ func TestTrimOutputStartsAtItsFirstFrame(t *testing.T) {
 }
 
 func TestTrimKeepsTheKeyframeItLandedOn(t *testing.T) {
-	// The strongest check there is that the cut landed on the right keyframe and
-	// copied the right bytes: the output's first frame decodes to the same
-	// picture as the source's keyframe at the actual start time.
+	// The strongest check there is that the cut copied the right bytes onto the
+	// right timeline: the keyframe the source shows at 1.5 seconds decodes to
+	// the same picture out of the cut, shown 0.2 seconds after the 1.3 it
+	// starts at. The keyframe at 1.0 the copy began on is the hidden lead-in,
+	// so the nearest keyframe to zero that is shown is this one.
 	source := readCorpus(t, gop12)
-	want, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), time.Second, sprocket.ThumbnailOptions{})
+	want, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), 1500*time.Millisecond, sprocket.ThumbnailOptions{})
 	skipIfCompiledOut(t, gop12, err)
 	if err != nil {
-		t.Fatalf("thumbnail the source at 1s: %v", err)
+		t.Fatalf("thumbnail the source at 1.5s: %v", err)
 	}
 
 	out, actual := trimmed(t, gop12, 1300*time.Millisecond, 2200*time.Millisecond)
@@ -149,20 +153,22 @@ func TestTrimKeepsTheKeyframeItLandedOn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("thumbnail the trim: %v", err)
 	}
+	closeTo(t, "the keyframe's time in the trim", got.Time, want.Time-actual)
 	if !bytes.Equal(got.Image.(*image.RGBA).Pix, want.Image.(*image.RGBA).Pix) {
-		t.Errorf("the trim starting at %v decoded a different picture from the source's keyframe there", actual)
+		t.Errorf("the trim starting at %v decoded a different picture from the source's keyframe at 1.5s", actual)
 	}
 }
 
 func TestTrimOnAFileWithOneKeyframe(t *testing.T) {
 	// The rest of the corpus holds a single keyframe at the start, so every cut
-	// snaps back to zero however late it was asked for.
+	// copies from zero however late it was asked for, and hides what it copied
+	// before the start.
 	for _, name := range []string{"hevc-aac-8bit.mov", "h264-aac.mp4"} {
 		t.Run(name, func(t *testing.T) {
 			out, actual := trimmed(t, name, 500*time.Millisecond, 1500*time.Millisecond)
 
-			if actual != 0 {
-				t.Errorf("actual start = %v, want 0", actual)
+			if actual != 500*time.Millisecond {
+				t.Errorf("actual start = %v, want 500ms", actual)
 			}
 			file := demux(t, out)
 			// 37 of the 48 samples: 1.5 seconds of 24 fps video, and the sample
@@ -170,7 +176,7 @@ func TestTrimOnAFileWithOneKeyframe(t *testing.T) {
 			if got := trackOf(t, file, "vide").SampleCount(); got != 37 {
 				t.Errorf("video holds %d samples, want 37", got)
 			}
-			closeTo(t, "duration", probeBytes(t, out).Duration, 1541667*time.Microsecond)
+			closeTo(t, "duration", probeBytes(t, out).Duration, 1041667*time.Microsecond)
 
 			frame, err := sprocket.Thumbnail(bytes.NewReader(out), int64(len(out)), 0, sprocket.ThumbnailOptions{})
 			skipIfCompiledOut(t, name, err)
@@ -194,7 +200,7 @@ func TestTrimClampsTheEndToTheFile(t *testing.T) {
 	// is all the file has left however much was asked for.
 	out, actual := trimmed(t, gop12, 2900*time.Millisecond, 10*time.Second)
 
-	closeTo(t, "actual start", actual, 2500*time.Millisecond)
+	closeTo(t, "actual start", actual, 2900*time.Millisecond)
 	if got := trackOf(t, demux(t, out), "vide").SampleCount(); got != 12 {
 		t.Errorf("video holds %d samples, want 12", got)
 	}
@@ -235,8 +241,8 @@ func TestTrimOfAnEmptyRangeKeepsOneSample(t *testing.T) {
 func TestTrimAVideoOnlyFile(t *testing.T) {
 	out, actual := trimmed(t, "no-audio.mp4", 500*time.Millisecond, 1500*time.Millisecond)
 
-	if actual != 0 {
-		t.Errorf("actual start = %v, want 0", actual)
+	if actual != 500*time.Millisecond {
+		t.Errorf("actual start = %v, want 500ms", actual)
 	}
 	file := demux(t, out)
 	if len(file.Tracks) != 1 {
@@ -253,11 +259,76 @@ func TestTrimAlignsAudioWithTheVideo(t *testing.T) {
 	out, _ := trimmed(t, gop12, 1300*time.Millisecond, 2200*time.Millisecond)
 	file := demux(t, out)
 
-	video := trackOf(t, file, "vide").Duration()
-	audio := trackOf(t, file, "soun").Duration()
+	video := presented(trackOf(t, file, "vide"))
+	audio := presented(trackOf(t, file, "soun"))
 	if diff := video - audio; diff > audioFrame || diff < -audioFrame {
 		t.Errorf("audio runs %v and video %v, %v apart, want at most one %v frame", audio, video, diff, audioFrame)
 	}
+}
+
+// presented is how long a track of a trim plays: its media, less the lead-in
+// its edit list hides.
+func presented(track *isobmff.Track) time.Duration {
+	if len(track.Edits) == 0 {
+		return track.Duration()
+	}
+	return track.Duration() - time.Duration(track.Edits[0].MediaTime)*time.Second/time.Duration(track.Timescale)
+}
+
+// The sparse-keyframe corpus files and the cut issue 42 reported: keyframes at 0
+// and 3 seconds only, and a start of 1.969 seconds, which has nothing but the
+// keyframe at zero to copy from.
+const (
+	sparseStart = 1969 * time.Millisecond
+	sparseEnd   = 3500 * time.Millisecond
+)
+
+func TestTrimStartsAtTheRequestedFrame(t *testing.T) {
+	// Every container but a transport stream hides the lead-in, so the clip is
+	// shown from the start that was asked for and runs to the end. The
+	// internal packages check the frame on screen at zero for each writer.
+	for _, tc := range []struct {
+		source string
+		target sprocket.Container
+	}{
+		{source: "h264-gop72.mp4", target: sprocket.MP4},
+		{source: "h264-gop72.mp4", target: sprocket.MOV},
+		{source: "h264-gop72.mp4", target: sprocket.MKV},
+		{source: "h264-gop72.mkv", target: sprocket.MKV},
+		{source: "h264-gop72.mkv", target: sprocket.MP4},
+	} {
+		t.Run(tc.source+" into "+string(tc.target), func(t *testing.T) {
+			out, actual := trimmedInto(t, tc.source, tc.target, sparseStart, sparseEnd)
+			if actual != sparseStart {
+				t.Errorf("actual start = %v, want the %v asked for", actual, sparseStart)
+			}
+			const tolerance = 50 * time.Millisecond
+			if got, want := probeBytes(t, out).Duration, sparseEnd-sparseStart; got < want-tolerance || got > want+tolerance {
+				t.Errorf("duration = %v, want about %v", got, want)
+			}
+		})
+	}
+
+	t.Run("an mp4 edit list", func(t *testing.T) {
+		out, _ := trimmedInto(t, "h264-gop72.mp4", sprocket.MP4, sparseStart, sparseEnd)
+		file := demux(t, out)
+		for _, track := range file.Tracks {
+			if len(track.Edits) != 1 {
+				t.Fatalf("the %s track's edit list is %+v, want one entry", track.Handler, track.Edits)
+			}
+		}
+		// The video's list skips from the keyframe at zero to the start.
+		video := trackOf(t, file, "vide")
+		skip := time.Duration(video.Edits[0].MediaTime) * time.Second / time.Duration(video.Timescale)
+		closeTo(t, "the video's skipped lead-in", skip, sparseStart)
+	})
+
+	t.Run("a transport stream keeps the keyframe", func(t *testing.T) {
+		_, actual := trimmedInto(t, "h264-gop72.mp4", sprocket.TS, sparseStart, sparseEnd)
+		if actual != 0 {
+			t.Errorf("actual start = %v, want the keyframe at 0", actual)
+		}
+	})
 }
 
 func TestTrimRefusesWhatItCannotWrite(t *testing.T) {

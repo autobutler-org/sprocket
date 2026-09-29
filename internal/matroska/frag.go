@@ -228,7 +228,12 @@ func (s *fragSource) prime() error {
 		if state.fallback > 0 {
 			lead = (lead + state.fallback - 1) / state.fallback * state.fallback
 		}
-		s.tracks[i].EditDelay, state.delay = uint64(lead), lead
+		state.delay = lead
+		// A cut's lead-in is hidden the same way: each track decodes
+		// from zero on its own first block, and the edit list starts it that
+		// much further in, where the cut is shown from.
+		hidden := s.span.lead(state.number) * int64(s.src.TimestampScale) / s.nanosPerTick
+		s.tracks[i].EditDelay = uint64(lead + hidden)
 	}
 	return nil
 }

@@ -54,6 +54,17 @@ FF=(ffmpeg -y -hide_banner -loglevel error)
 	-c:a aac -b:a 32k "${EXACT[@]}" \
 	h264-gop12.mp4
 
+# The sparse-keyframe case, in both families: four seconds with keyframes at 0 and
+# 3 s only, the three second GOP a phone or a screen recorder writes. A trim asked to
+# start at 1.969 s has nothing but the keyframe at zero to copy from, so it is the
+# file that shows whether the lead-in before the requested start is hidden.
+for ext in mp4 mkv; do
+	"${FF[@]}" "${VIDEO[@]}" "${AUDIO[@]}" -t 4 \
+		-c:v libx264 -crf 40 -pix_fmt yuv420p -g 72 -keyint_min 72 -sc_threshold 0 \
+		-c:a aac -b:a 32k "${EXACT[@]}" \
+		"h264-gop72.$ext"
+done
+
 # Video with no audio track.
 "${FF[@]}" "${VIDEO[@]}" "${ENCODE[@]}" -an "${EXACT[@]}" \
 	no-audio.mp4

@@ -376,8 +376,8 @@ func TestRemuxMatroskaHoldsBoundedMemory(t *testing.T) {
 }
 
 // TestTrimMatroskaSource cuts a Matroska file into each container the codecs
-// allow. The start snaps back to the keyframe at 1.0 seconds, so the output
-// holds the 1.2 seconds from there to the requested end.
+// allow. The copy starts at the keyframe at 1.0 seconds and the output is shown
+// from the 1.3 asked for, so it plays the 0.9 seconds from there to the end.
 func TestTrimMatroskaSource(t *testing.T) {
 	for _, target := range []sprocket.Container{sprocket.MKV, sprocket.MP4} {
 		t.Run(string(target), func(t *testing.T) {
@@ -389,13 +389,13 @@ func TestTrimMatroskaSource(t *testing.T) {
 			if err != nil {
 				t.Fatalf("trim: %v", err)
 			}
-			if want := time.Second; actual != want {
+			if want := 1300 * time.Millisecond; actual != want {
 				t.Errorf("the cut begins at %v, want %v", actual, want)
 			}
 
 			info := probeBytes(t, out.Bytes())
 			const (
-				want      = 1200 * time.Millisecond
+				want      = 900 * time.Millisecond
 				tolerance = 50 * time.Millisecond
 			)
 			if diff := info.Duration - want; diff > tolerance || diff < -tolerance {
@@ -407,21 +407,28 @@ func TestTrimMatroskaSource(t *testing.T) {
 			if !h264Compiled {
 				return
 			}
-			// The output has to begin on the keyframe the cut snapped to, and
-			// it has to be the same picture the source shows there.
-			want1s, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), actual, sprocket.ThumbnailOptions{})
+			// The keyframe the source shows at 1.5 seconds is 0.2 seconds into
+			// the cut, which is shown from 1.3, and it has to be the same
+			// picture. An mkv's times are read as stored, without the
+			// CodecDelay that hides the 0.3 second lead-in, so there it is at
+			// 0.5.
+			keyframe, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), 1500*time.Millisecond, sprocket.ThumbnailOptions{})
 			if err != nil {
-				t.Fatalf("thumbnail the source at %v: %v", actual, err)
+				t.Fatalf("thumbnail the source at 1.5s: %v", err)
 			}
-			got, err := sprocket.Thumbnail(bytes.NewReader(out.Bytes()), int64(out.Len()), 0, sprocket.ThumbnailOptions{})
+			at := 200 * time.Millisecond
+			if target == sprocket.MKV {
+				at += 300 * time.Millisecond
+			}
+			got, err := sprocket.Thumbnail(bytes.NewReader(out.Bytes()), int64(out.Len()), at, sprocket.ThumbnailOptions{})
 			if err != nil {
 				t.Fatalf("thumbnail the cut: %v", err)
 			}
-			if got.Time != 0 {
-				t.Errorf("the cut's first keyframe is at %v, want 0", got.Time)
+			if diff := got.Time - at; diff > time.Millisecond || diff < -time.Millisecond {
+				t.Errorf("the cut's keyframe is at %v, want %v", got.Time, at)
 			}
-			if !bytes.Equal(got.Image.(*image.RGBA).Pix, want1s.Image.(*image.RGBA).Pix) {
-				t.Error("the cut begins on a different picture from the source's keyframe at 1 second")
+			if !bytes.Equal(got.Image.(*image.RGBA).Pix, keyframe.Image.(*image.RGBA).Pix) {
+				t.Error("the cut shows a different picture from the source's keyframe at 1.5 seconds")
 			}
 		})
 	}
@@ -490,7 +497,7 @@ func inflatedMatroskaSource(size int64) (io.ReaderAt, int64) {
 // TestTrimFFmpegCopiedHEVCMatroska is issue 43: an HEVC mkv that ffmpeg copied
 // out of a mov carries a Colour master element in its Video element, which the
 // track parser once read as an integer and refused. The one keyframe is at the
-// start, so the cut snaps back to zero.
+// start, so the copy starts there and the half second before the cut is hidden.
 func TestTrimFFmpegCopiedHEVCMatroska(t *testing.T) {
 	for _, target := range []sprocket.Container{sprocket.MKV, sprocket.MP4} {
 		t.Run(string(target), func(t *testing.T) {
@@ -502,8 +509,8 @@ func TestTrimFFmpegCopiedHEVCMatroska(t *testing.T) {
 			if err != nil {
 				t.Fatalf("trim: %v", err)
 			}
-			if actual != 0 {
-				t.Errorf("the cut begins at %v, want 0", actual)
+			if actual != 500*time.Millisecond {
+				t.Errorf("the cut begins at %v, want 500ms", actual)
 			}
 			info := probeBytes(t, out.Bytes())
 			if info.VideoCodec != "hevc" || info.AudioCodec != "aac" {
@@ -527,16 +534,16 @@ func TestTrimIntoMatroska(t *testing.T) {
 	if err != nil {
 		t.Fatalf("trim: %v", err)
 	}
-	if want := time.Second; actual != want {
+	if want := 1300 * time.Millisecond; actual != want {
 		t.Errorf("the cut begins at %v, want %v", actual, want)
 	}
 
-	// The cut runs from the keyframe it snapped back to, at 1.0 seconds, to the
-	// end that was asked for, at 2.3, so the output is the 1.3 seconds between
-	// them rather than the second that was asked for.
+	// The copy runs from the keyframe at 1.0 seconds, but the blocks before
+	// 1.3 are stamped ahead of zero, so the output plays the second that was
+	// asked for.
 	info := probeBytes(t, out.Bytes())
 	const (
-		want      = 1300 * time.Millisecond
+		want      = 1000 * time.Millisecond
 		tolerance = 100 * time.Millisecond
 	)
 	if diff := info.Duration - want; diff > tolerance || diff < -tolerance {
@@ -548,7 +555,7 @@ func TestTrimIntoMatroska(t *testing.T) {
 	if !h264Compiled {
 		return
 	}
-	// The output has to start on the keyframe the cut snapped to.
+	// The output has to start on the keyframe the copy started from.
 	frame, err := sprocket.Thumbnail(bytes.NewReader(out.Bytes()), int64(out.Len()), 0, sprocket.ThumbnailOptions{})
 	if err != nil {
 		t.Fatalf("thumbnail of the trimmed output: %v", err)

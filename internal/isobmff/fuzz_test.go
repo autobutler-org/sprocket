@@ -112,7 +112,7 @@ func FuzzParse(f *testing.F) {
 		// And again over a sample range, which is the trim: the ranges come
 		// from the same tables, and slicing them is more arithmetic to get
 		// wrong than copying them.
-		ranges, _, err := file.TrimRanges(time.Second, 2*time.Second)
+		ranges, _, err := file.TrimRanges(1300*time.Millisecond, 2*time.Second, true)
 		if err != nil {
 			return
 		}
