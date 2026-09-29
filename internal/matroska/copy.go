@@ -148,7 +148,9 @@ func copyClusters(out *countingWriter, src *File, tracks []*outTrack, span TrimS
 			if len(blocks) >= maxClusterBlocks {
 				return fmt.Errorf("%w: a cluster of over %d blocks", ErrMalformed, maxClusterBlocks)
 			}
-			ticks := span.rebase(b.track, b.ticks)
+			// The source's CodecDelay goes back on, since the output declares
+			// it again: a whole-file copy stores what the source stored.
+			ticks := span.rebase(b.track, b.ticks) + src.delayOf(b.track)
 			clusterTicks = min(clusterTicks, ticks)
 			blocks = append(blocks, outBlock{
 				track: b.track, ticks: ticks, keyframe: b.keyframe, flags: b.flags,

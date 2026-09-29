@@ -138,9 +138,14 @@ type Track struct {
 	Lacing bool
 	// CodecDelay is the nanoseconds a player subtracts from every timestamp
 	// of the track before showing it, RFC 9559 section 5.1.4.1.25: an Opus
-	// encoder's pre-skip, or a cut's hidden lead-in. It is carried across by
-	// Copy and not applied to the times this package reports.
+	// encoder's pre-skip, an AAC encoder's priming, or a cut's hidden
+	// lead-in. Every time this package reports for the track has it
+	// subtracted, as a player does, and the writers carry it across.
 	CodecDelay uint64
+
+	// delay is CodecDelay on the file's timestamp scale, rounded to nearest as
+	// ffmpeg rounds it. A block is shown at its stored timestamp less this.
+	delay int64
 }
 
 // Parse reads the structure of a Matroska file. It reads the EBML header, the
@@ -374,6 +379,12 @@ func (f *File) parseTracks(body []byte) error {
 		if err != nil {
 			return err
 		}
+		scale := f.TimestampScale
+		whole, rest := t.CodecDelay/scale, t.CodecDelay%scale
+		if rest >= scale-rest {
+			whole++
+		}
+		t.delay = int64(min(whole, math.MaxInt64))
 		f.Tracks = append(f.Tracks, t)
 		return nil
 	})
@@ -499,6 +510,17 @@ func (f *File) VideoTrack() *Track { return f.trackByType(trackVideo) }
 
 // AudioTrack returns the first audio track, or nil.
 func (f *File) AudioTrack() *Track { return f.trackByType(trackAudio) }
+
+// delayOf is a track's CodecDelay in ticks, or 0 for a track the file does not
+// declare.
+func (f *File) delayOf(track uint64) int64 {
+	for _, t := range f.Tracks {
+		if t.Number == track {
+			return t.delay
+		}
+	}
+	return 0
+}
 
 func (f *File) trackByType(want uint64) *Track {
 	for _, t := range f.Tracks {

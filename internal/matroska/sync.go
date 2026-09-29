@@ -13,9 +13,9 @@ type SyncSample struct {
 	// for vp8, vp9, and av1 it is the codec's own bitstream with no framing
 	// added.
 	Data []byte
-	// Time is when the frame is shown, from the block's timestamp. Matroska has
-	// no edit list and no composition offsets, so this is the only timeline
-	// there is.
+	// Time is when the frame is shown: the block's timestamp less the track's
+	// CodecDelay. Matroska has no edit list and no composition offsets, so
+	// that is the whole of the timeline. A frame the delay hides reports zero.
 	Time time.Duration
 	// Codec is the track's codec short name, as Track.Codec documents.
 	Codec string
@@ -195,7 +195,8 @@ func (f *File) parseCuePoint(video *Track, point []byte) (keyframeAt, bool, erro
 	if err != nil || !forTrack {
 		return keyframeAt{}, false, err
 	}
-	found.ticks = int64(ticks)
+	// A cue's time is stored like a block's, before the CodecDelay comes off.
+	found.ticks = int64(ticks) - video.delay
 	return found, true, nil
 }
 

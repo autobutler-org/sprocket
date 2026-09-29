@@ -24,7 +24,8 @@ type block struct {
 	// track is the TrackNumber the block belongs to.
 	track uint64
 	// ticks is when the block is shown, absolute, on the file's timestamp
-	// scale: the cluster's timestamp plus the block's own signed offset.
+	// scale: the cluster's timestamp plus the block's own signed offset, less
+	// the track's CodecDelay. A block the delay hides is shown before zero.
 	ticks int64
 	// keyframe reports whether the block decodes on its own.
 	keyframe bool
@@ -54,7 +55,9 @@ type block struct {
 // The cluster's own Timestamp is its first child in every file that follows the
 // spec, so a block is given an absolute time as it is walked. A cluster that
 // declares its timestamp late, or not at all, has its blocks reported against
-// zero, which is what the format leaves as the default.
+// zero, which is what the format leaves as the default. Each block's time has
+// its track's CodecDelay subtracted, so every reader works on the timeline a
+// player shows.
 func (f *File) eachBlock(cluster span, fn func(b block) error) error {
 	var clusterTicks int64
 	return scan(f.r, cluster.start, cluster.size, maxClusterChildren, func(e element, off int64) error {
@@ -75,14 +78,14 @@ func (f *File) eachBlock(cluster span, fn func(b block) error) error {
 			if err != nil {
 				return err
 			}
-			b.at = off
+			b.at, b.ticks = off, b.ticks-f.delayOf(b.track)
 			return fn(b)
 		case idBlockGroup:
 			b, ok, err := f.readBlockGroup(payload, clusterTicks)
 			if err != nil || !ok {
 				return err
 			}
-			b.at = off
+			b.at, b.ticks = off, b.ticks-f.delayOf(b.track)
 			return fn(b)
 		}
 		return nil

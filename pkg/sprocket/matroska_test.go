@@ -409,17 +409,13 @@ func TestTrimMatroskaSource(t *testing.T) {
 			}
 			// The keyframe the source shows at 1.5 seconds is 0.2 seconds into
 			// the cut, which is shown from 1.3, and it has to be the same
-			// picture. An mkv's times are read as stored, without the
-			// CodecDelay that hides the 0.3 second lead-in, so there it is at
-			// 0.5.
+			// picture. An mkv's times are read less the CodecDelay that hides
+			// the 0.3 second lead-in, as a player shows them.
 			keyframe, err := sprocket.Thumbnail(bytes.NewReader(source), int64(len(source)), 1500*time.Millisecond, sprocket.ThumbnailOptions{})
 			if err != nil {
 				t.Fatalf("thumbnail the source at 1.5s: %v", err)
 			}
 			at := 200 * time.Millisecond
-			if target == sprocket.MKV {
-				at += 300 * time.Millisecond
-			}
 			got, err := sprocket.Thumbnail(bytes.NewReader(out.Bytes()), int64(out.Len()), at, sprocket.ThumbnailOptions{})
 			if err != nil {
 				t.Fatalf("thumbnail the cut: %v", err)
@@ -555,13 +551,14 @@ func TestTrimIntoMatroska(t *testing.T) {
 	if !h264Compiled {
 		return
 	}
-	// The output has to start on the keyframe the copy started from.
+	// The keyframe the copy started from is hidden 0.3 seconds before zero,
+	// so the one nearest the start is the source's at 1.5, shown at 0.2.
 	frame, err := sprocket.Thumbnail(bytes.NewReader(out.Bytes()), int64(out.Len()), 0, sprocket.ThumbnailOptions{})
 	if err != nil {
 		t.Fatalf("thumbnail of the trimmed output: %v", err)
 	}
-	if frame.Time != 0 {
-		t.Errorf("the trimmed output's first keyframe is at %v, want 0", frame.Time)
+	if want := 200 * time.Millisecond; frame.Time != want {
+		t.Errorf("the trimmed output's nearest keyframe is at %v, want %v", frame.Time, want)
 	}
 }
 
