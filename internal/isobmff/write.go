@@ -158,7 +158,13 @@ const mdatHeaderSize = largeBoxHeaderSize
 
 // Range is an inclusive run of one track's samples, by zero-based index. It is
 // how Trim asks Write for part of a track rather than all of it.
-type Range struct{ First, Last uint32 }
+type Range struct {
+	First, Last uint32
+	// Lead is how much of the run, in the track's media ticks from when its
+	// first sample is shown, comes before the cut and is kept only so the
+	// rest decodes. A writer hides it; zero hides nothing.
+	Lead uint64
+}
 
 // Write writes src into w as a file of the target container: an ftyp, then a
 // moov holding every track's tables, then one mdat with the sample payload
@@ -168,9 +174,10 @@ type Range struct{ First, Last uint32 }
 // track with no entry, and so every track when the map is nil, is written
 // whole, which is what a remux asks for. A cut track's run tables are sliced at
 // both ends and its edit list is dropped: the list described the source's
-// timeline, and the cut no longer has it. See TrimRanges, which picks the
-// spans, and the sprocket package documentation under "Trim" for what that
-// costs a caller.
+// timeline, and the cut no longer has it. A cut with a Lead gets a one-entry
+// edit list of its own instead, which starts the track that far into its
+// media. See TrimRanges, which picks the spans, and the sprocket package
+// documentation under "Trim" for what that costs a caller.
 //
 // The header goes first. The source's own tables give every sample's size, so
 // the output's chunk offsets are known before a byte of payload moves, and the
@@ -266,12 +273,17 @@ type cutTrack struct {
 	media uint64
 	// edits is the edts to copy, nil for a cut track.
 	edits []byte
+	// skip is the media time a cut track's own edit list starts it at, which
+	// hides its lead-in, and zero for a track that needs no list.
+	skip uint64
 }
 
 // newCutTrack works out what to write for one track. Without a range the track
 // comes across as it stands, declared duration and edit list included. With
 // one, the run tables are sliced and the duration is the kept samples' own, and
-// the edit list goes: it measured a timeline the cut does not have.
+// the edit list goes: it measured a timeline the cut does not have. A lead is
+// measured from the first kept sample's composition time, which the slice may
+// have moved, so the skip is taken from the sliced tables.
 func newCutTrack(t *Track, span Range, cut bool) (cutTrack, error) {
 	if !cut {
 		return cutTrack{src: t, n: t.tables.count, tables: &t.tables, media: t.MediaDuration, edits: t.edts}, nil
@@ -285,13 +297,21 @@ func newCutTrack(t *Track, span Range, cut bool) (cutTrack, error) {
 	if err != nil {
 		return cutTrack{}, err
 	}
-	return cutTrack{src: t, first: span.First, n: n, tables: tables, media: tables.duration()}, nil
+	c := cutTrack{src: t, first: span.First, n: n, tables: tables, media: tables.duration()}
+	if span.Lead > 0 {
+		c.skip = tables.compositionTicks(0) + span.Lead
+	}
+	return c, nil
 }
 
 // duration is the track's duration on the movie timescale, which is what tkhd
 // stores. An edit list already measures there, so its entries are summed where
-// there is one; a cut track has none, so its kept media duration is converted.
+// there is one; a cut track has none, so its kept media duration is converted,
+// less the lead-in its own edit list skips.
 func (c cutTrack) duration(f *File) uint64 {
+	if c.skip > 0 {
+		return durationToTicks(ticksToDuration(c.media-min(c.skip, c.media), c.src.Timescale), movieTimescale(f))
+	}
 	if len(c.edits) > 0 {
 		var edited uint64
 		for _, e := range c.src.Edits {
@@ -450,8 +470,12 @@ func (b *boxWriter) trak(f *File, c cutTrack) int {
 	// A whole track's edit list is copied rather than rebuilt: it is what makes
 	// the output start where the input started, and a writer that re-derived it
 	// would be a second chance to get the priming delay wrong. A cut track has
-	// none to copy, because the cut invalidated it.
-	if len(c.edits) > 0 {
+	// none to copy, because the cut invalidated it, and gets one of its own only
+	// where it has a lead-in to hide.
+	switch {
+	case c.skip > 0:
+		b.edit(c.duration(f), c.skip)
+	case len(c.edits) > 0:
 		edts := b.open("edts")
 		b.raw(c.edits)
 		b.close(edts)

@@ -247,7 +247,9 @@ func TestTrimSpanSnapsToAKeyframe(t *testing.T) {
 	}{
 		{start: 0, end: time.Second, want: 0},
 		{start: -time.Second, end: time.Second, want: 0},
-		{start: 1300 * time.Millisecond, end: 2200 * time.Millisecond, want: time.Second},
+		// Mid-GOP: the cut still copies from the keyframe at 1.0 seconds, but it
+		// is shown from the start that was asked for.
+		{start: 1300 * time.Millisecond, end: 2200 * time.Millisecond, want: 1300 * time.Millisecond},
 		{start: 1500 * time.Millisecond, end: 2200 * time.Millisecond, want: 1500 * time.Millisecond},
 		{start: time.Hour, end: 2 * time.Hour, want: 2500 * time.Millisecond},
 	} {
@@ -259,11 +261,11 @@ func TestTrimSpanSnapsToAKeyframe(t *testing.T) {
 			if actual != tc.want {
 				t.Errorf("the cut begins at %v, want %v", actual, tc.want)
 			}
-			// The audio track begins on its last block at or before the video's
-			// first, the frame that straddles it, never after: a cut that
-			// started late would be silent where the picture is not.
-			video, audio := src.VideoTrack(), src.AudioTrack()
-			anchor := cut.First[video.Number]
+			// The audio track begins on its last block at or before the instant
+			// the cut is shown from, the frame that straddles it, never after:
+			// a cut that started late would be silent where the picture is not.
+			audio := src.AudioTrack()
+			anchor := cut.Origin
 			want := int64(math.MinInt64)
 			if err := src.eachCluster(func(payload span, _ int64) error {
 				return src.eachBlock(payload, func(b block) error {
@@ -276,10 +278,10 @@ func TestTrimSpanSnapsToAKeyframe(t *testing.T) {
 				t.Fatalf("walk the source: %v", err)
 			}
 			if got := cut.First[audio.Number]; got != want {
-				t.Errorf("audio begins at %d, want the block at %d that straddles the video's %d", got, want, anchor)
+				t.Errorf("audio begins at %d, want the block at %d that straddles the start at %d", got, want, anchor)
 			}
-			if cut.Origin != anchor {
-				t.Errorf("origin = %d, want the video keyframe at %d", cut.Origin, anchor)
+			if got := src.ticks(float64(cut.Origin)); got != tc.want {
+				t.Errorf("origin = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -343,10 +345,10 @@ func TestTrimSpanEdges(t *testing.T) {
 
 // TestTrimMatroskaIntoBothFamilies cuts the same window into each container and
 // checks that both begin on the keyframe and hold the window that was asked
-// for.
+// for. The start is a keyframe, so there is no lead-in to hide.
 func TestTrimMatroskaIntoBothFamilies(t *testing.T) {
 	src, _ := openMatroska(t, "h264-gop12.mkv")
-	cut, actual, err := src.TrimSpan(1300*time.Millisecond, 2200*time.Millisecond)
+	cut, actual, err := src.TrimSpan(time.Second, 2200*time.Millisecond)
 	if err != nil {
 		t.Fatalf("trim span: %v", err)
 	}

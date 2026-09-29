@@ -83,7 +83,8 @@ var docTypeFor = map[isobmff.Target]string{
 // ranges cuts each track down to a span of its samples, keyed by source track
 // ID, exactly as isobmff.Write takes it. A track with no entry, and so every
 // track when the map is nil, is written whole. A cut output's timestamps start
-// at zero, as they do on the ISOBMFF side.
+// at zero, as they do on the ISOBMFF side, and a range's Lead is declared as
+// the track's CodecDelay, as Copy declares a cut's.
 //
 // The segment declares an unknown size and the seek index goes at the end.
 // Matroska allows both, and together they are what makes the output writable in
@@ -156,6 +157,10 @@ type outTrack struct {
 	// lacing is the FlagLacing the output declares, set for a track whose
 	// blocks may pack several frames into one.
 	lacing bool
+	// codecDelay is the CodecDelay the output declares, in nanoseconds: what
+	// a player subtracts from every block's timestamp before showing it, which
+	// is how a cut's lead-in is hidden. Zero declares none.
+	codecDelay uint64
 
 	// src is the ISOBMFF track the samples come from, nil for a Matroska
 	// source. first and last are the source sample indexes the output keeps,
@@ -221,6 +226,7 @@ func outputTracks(src *isobmff.File, target isobmff.Target, ranges map[uint32]is
 			// delay behind the audio, which is the gap the source's edit list
 			// was there to hide.
 			entry.origin = t.MovieTime(sample.Composition, src.Timescale)
+			entry.codecDelay = uint64(t.MovieTime(sample.Composition+span.Lead, src.Timescale) - entry.origin)
 		}
 		entry.next = entry.first
 		if t.SampleCount() == 0 {
@@ -340,7 +346,7 @@ func outputDuration(src *isobmff.File, tracks []*outTrack) time.Duration {
 		if err != nil {
 			continue
 		}
-		end := t.src.MovieTime(last.Decode, src.Timescale) - t.origin
+		end := t.src.MovieTime(last.Decode, src.Timescale) - t.origin - time.Duration(t.codecDelay)
 		// The last sample's own length is not in the tables as a duration, so
 		// the track's average frame time stands in for it. It is a frame of
 		// slack on a cut, which is the same slack Trim already documents.
@@ -381,6 +387,9 @@ func (d *docWriter) trackEntry(t *outTrack) {
 	}
 	if t.defaultDuration > 0 {
 		d.integer(idDefaultDur, t.defaultDuration)
+	}
+	if t.codecDelay > 0 {
+		d.integer(idCodecDelay, t.codecDelay)
 	}
 	if t.typ == trackVideo {
 		video := d.open(idVideo)

@@ -479,7 +479,7 @@ func (b *boxWriter) fragTrak(t FragTrack, duration uint64) error {
 	b.close(tkhd)
 
 	if t.EditDelay > 0 {
-		b.fragEdts(t, duration)
+		b.edit(duration, t.EditDelay)
 	}
 	if err := b.fragMdia(t); err != nil {
 		return err
@@ -488,14 +488,16 @@ func (b *boxWriter) fragTrak(t FragTrack, duration uint64) error {
 	return nil
 }
 
-// fragEdts writes the one-entry edit list that takes a track's decode lead back
-// off its presentation. ISO/IEC 14496-12 8.6.6.
-func (b *boxWriter) fragEdts(t FragTrack, duration uint64) {
+// edit writes a one-entry edit list: the track is shown for duration, on the
+// movie timescale, from mediaTime on its own. It is what takes a fragmented
+// track's decode lead back off its presentation, and what hides a cut's
+// lead-in. ISO/IEC 14496-12 8.6.6.
+func (b *boxWriter) edit(duration, mediaTime uint64) {
 	edts := b.open("edts")
 	elst := b.full("elst", 1, 0)
 	b.u32(1) // entry count
 	b.u64(duration)
-	b.u64(t.EditDelay)
+	b.u64(mediaTime)
 	b.u32(one16) // rate, 1.0
 	b.close(elst)
 	b.close(edts)
