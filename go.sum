@@ -1,8 +1,8 @@
-github.com/gen2brain/gav1d v0.2.5 h1:Zg5/DE1JBdf8kxZqIvNo2ZEizF9DVF9jdPTAKJQZbOY=
-github.com/gen2brain/gav1d v0.2.5/go.mod h1:ReFKjHq7pvRhEk+pgRPAo9gOlcrf51sdzVcAbbX7e0E=
-github.com/gen2brain/h265 v0.2.3 h1:+fEP2Xf1CoZ21SxA2YpqnPZb6Y/hAEkcgjU1gMsOhrk=
-github.com/gen2brain/h265 v0.2.3/go.mod h1:kefpLxLhGpNCUG/q/aabJcD6GqB9Nhet3fNi9xX9Wzw=
-github.com/rcarmo/go-264 v0.0.0-20260918175710-241fd4164612 h1:mlbNKJ11fSXfi/BxVEe/IlPwUzMrjS1SnAT+XTvJ2Ws=
-github.com/rcarmo/go-264 v0.0.0-20260918175710-241fd4164612/go.mod h1:DfT0hsjYj65x9Y1WRU9gNO/yvZZlvCorI8t4gQxQMX4=
-golang.org/x/image v0.46.0 h1:b1+oYj0Jbp6K5MDT4i4/eZpYlk3V8SJhhDKh6LBHAyQ=
-golang.org/x/image v0.46.0/go.mod h1:3B3W05VGVQyuXucLINLjXKrqISASfi4Xj+iCVkLMwew=
+github.com/gen2brain/gav1d v0.2.6 h1:7TSkrWTdE22k5Ul7vYZML7Nu80gNW6OovV7FSCITSE0=
+github.com/gen2brain/gav1d v0.2.6/go.mod h1:ReFKjHq7pvRhEk+pgRPAo9gOlcrf51sdzVcAbbX7e0E=
+github.com/gen2brain/h265 v0.2.4 h1:JUSbGkRAYZpd7ucCL192yx4ViEo75ZO6OEdm1TQt9qM=
+github.com/gen2brain/h265 v0.2.4/go.mod h1:kefpLxLhGpNCUG/q/aabJcD6GqB9Nhet3fNi9xX9Wzw=
+github.com/rcarmo/go-264 v0.0.0-20261008100743-cecca3835cbd h1:zU+ECAakEaTv/LaSN1sCLKmG0BCIfdJopgiWYd8YYZY=
+github.com/rcarmo/go-264 v0.0.0-20261008100743-cecca3835cbd/go.mod h1:3VOB625E/ceyQZy0FTCGoDujYj2pFdHPuiwXXhZ/JSk=
+golang.org/x/image v0.47.0 h1:za/8gVz++PPZqmZJBNSISICN5Rrj5zixP/8K++fgmqo=
+golang.org/x/image v0.47.0/go.mod h1:IkN5o4A7vq55vXN8FWjjnhg9Rs2GOtffqsSi9mWAKYE=
